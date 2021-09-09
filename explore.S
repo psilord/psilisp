@@ -4,16 +4,21 @@
 
     .text
     .globl explore
+
+#if !__CYGWIN__
+	# Windows PECOFF format doesn't support .type, figure out later.
     .type explore, @function
+#endif
+
 explore:
-    mov %rdi, %rax
-    mov $30, %rax # arg1
-    cmp $29, %rax # arg0
+    movq %rdi, %rax
+    movq $30, %rax # arg1
+    cmpq $29, %rax # arg0
     setg %al
     movzbl %al, %rax
     #sal $6, %al
     #or $0x2f, %al
 
-    mov $10, %rax
-    sub $2, %rax
+    movq $10, %rax
+    subq $2, %rax
     ret
