@@ -454,7 +454,7 @@
   ;; Right after the CMP instruction, we do this to generate the boolean value
   ;; instruction stream. We do it a lot, so abstract it to this function.
   (base:emit () "~A %al" setcc)
-  (base:emit () "movzbl %al, %rax")
+  (base:emit () "movzbq %al, %rax")
   (base:emit () "sal $0x~X, %al" +bool-bit+)
   (base:emit () "or $0x~X, %al" +bool-tag+))
 

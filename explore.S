@@ -15,7 +15,7 @@ explore:
     movq $30, %rax # arg1
     cmpq $29, %rax # arg0
     setg %al
-    movzbl %al, %rax
+    movzbq %al, %rax
     #sal $6, %al
     #or $0x2f, %al
 
