@@ -287,31 +287,31 @@
 (define-primitive (fxadd1 si env arg)
   (emit-expr si env arg)
   (base:emit (:cmnt ("prim: fxadd1"))
-             "add $0x~X, %rax" (immediate-rep 1))
+             "addq $0x~X, %rax" (immediate-rep 1))
   #++(base:emit () "and $0x~X, %rax" (* (1- (expt 2 (fixnum-bits))) 4)))
 
 ;; TODO: Check carefully underflow situations.
 (define-primitive (fxsub1 si env arg)
   (emit-expr si env arg)
   (base:emit (:cmnt ("prim: fxsub1"))
-             "sub $0x~X, %rax" (immediate-rep 1))
+             "subq $0x~X, %rax" (immediate-rep 1))
   #++(base:emit () "and $0x~X, %rax" (* (1- (expt 2 (fixnum-bits))) 4)))
 
 (define-primitive (fixnum->char si env arg)
   (emit-expr si env arg)
   (base:emit (:cmnt ("prim: fixnum->char"))
-             "shl $0x~X, %rax" (- +char-shift+ +fx-shift+))
+             "shlq $0x~X, %rax" (- +char-shift+ +fx-shift+))
   (base:emit () "or $0x~X, %rax" +char-tag+))
 
 (define-primitive (char->fixnum si env arg)
   (emit-expr si env arg)
   (base:emit (:cmnt ("prim: char->fixnum"))
-             "shr $0x~X, %rax" (- +char-shift+ +fx-shift+)))
+             "shrq $0x~X, %rax" (- +char-shift+ +fx-shift+)))
 
 (define-primitive (fxzero? si env arg)
   (emit-expr si env arg)
   (base:emit (:cmnt ("prim: fxzero?"))
-             "cmp $0x~X, %rax" 0)
+             "cmpq $0x~X, %rax" 0)
   (emit-gen-bool "sete"))
 
 (define-primitive (fixnum? si env arg)
@@ -352,19 +352,19 @@
   (emit-expr si env arg)
   (base:emit (:cmnt ("prim: fxlognot"))
              "not %rax")
-  (base:emit () "and $0x~X, %rax" (* (1- (expt 2 (fixnum-bits))) 4)))
+  (base:emit () "andq $0x~X, %rax" (* (1- (expt 2 (fixnum-bits))) 4)))
 
 ;; Binary primitives
 
 (define-primitive (fx+ si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx+"))
-             "add ~A(%rsp), %rax" si))
+             "addq ~A(%rsp), %rax" si))
 
 (define-primitive (fx- si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx-"))
-             "sub ~A(%rsp), %rax" si))
+             "subq ~A(%rsp), %rax" si))
 
 (define-primitive (fx* si env arg0 arg1)
   ;; Use 4xy = (4x/4) * 4y to compute the value. If we bare multiplied them,
@@ -379,71 +379,71 @@
 (define-primitive (fxlogand si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx-"))
-             "and ~A(%rsp), %rax" si))
+             "andq ~A(%rsp), %rax" si))
 
 (define-primitive (fxlogor si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fxlogor"))
-             "or ~A(%rsp), %rax" si))
+             "orq ~A(%rsp), %rax" si))
 
 (define-primitive (fx= si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx="))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "sete"))
 
 (define-primitive (fx< si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx<"))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setl"))
 
 (define-primitive (fx<= si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx<="))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setle"))
 
 (define-primitive (fx> si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx>"))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setg"))
 
 (define-primitive (fx>= si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: fx>="))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setge"))
 
 (define-primitive (char= si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: char="))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "sete"))
 
 (define-primitive (char< si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: char<"))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setl"))
 
 (define-primitive (char<= si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: char<="))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setle"))
 
 (define-primitive (char> si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: char>"))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setg"))
 
 (define-primitive (char>= si env arg0 arg1)
   (emit-binop-args si env arg0 arg1)
   (base:emit (:cmnt ("prim: char>="))
-             "cmp ~A(%rsp), %rax" si)
+             "cmpq ~A(%rsp), %rax" si)
   (emit-gen-bool "setge"))
 
 
@@ -464,10 +464,10 @@
   (emit-expr (next-stack-index si) env arg0))
 
 (defun emit-stack-save (si)
-  (base:emit () "mov %rax, ~A(%rsp)" si))
+  (base:emit () "movq %rax, ~A(%rsp)" si))
 
 (defun emit-stack-load (si)
-  (base:emit () "mov ~A(%rsp), %rax" si))
+  (base:emit () "movq ~A(%rsp), %rax" si))
 
 (defun emit-immediate (x)
   (unless (immediatep x)
@@ -476,9 +476,9 @@
     ;; Trickey handling of negative fixnums due to syntax requirements of gas.
     (if (and (fixnump x) (< x 0))
         (base:emit (:cmnt ("imm: ~(~A~) ~A" desc x))
-                   "mov $-0x~X, %rax" (abs encoded-value))
+                   "movq $-0x~X, %rax" (abs encoded-value))
         (base:emit (:cmnt ("imm: ~(~A~) ~A" desc x))
-                   "mov $0x~X, %rax" encoded-value))))
+                   "movq $0x~X, %rax" encoded-value))))
 
 (defun emit-primcall (si env x)
   (unless (primcallp x)

@@ -1,30 +1,33 @@
     .text                               
     .globl scheme_entry                 
-    .type scheme_entry, @function       
+    #if !__CYGWIN__                     
+        # Windows PECOFF doesn't have this directive.
+        .type scheme_entry, @function   
+    #endif                              
 scheme_entry:
-    mov %rsp, %rcx                      # Save C stack pointer
-    mov %rdi, %rsp                      # Incoming arg0 -> lisp stack pointer.
+    movq %rsp, %rcx                     # Save C stack pointer
+    movq %rdi, %rsp                     # Incoming arg0 -> lisp stack pointer.
     call L_scheme_entry                 
-    mov %rcx, %rsp                      # Restore C stack pointer.
+    movq %rcx, %rsp                     # Restore C stack pointer.
     ret                                 
 L_scheme_entry:
-    mov $0x4, %rax                      # imm: fixnum 1
+    movq $0x4, %rax                     # imm: fixnum 1
     # LET*: Store var X at -8
-    mov %rax, -8(%rsp)                  
-    mov $0x4, %rax                      # imm: fixnum 1
-    mov %rax, -16(%rsp)                 
+    movq %rax, -8(%rsp)                 
+    movq $0x4, %rax                     # imm: fixnum 1
+    movq %rax, -16(%rsp)                
     # Load var X at -8
-    mov -8(%rsp), %rax                  
-    add -16(%rsp), %rax                 # prim: fx+
+    movq -8(%rsp), %rax                 
+    addq -16(%rsp), %rax                # prim: fx+
     # LET*: Store var X at -16
-    mov %rax, -16(%rsp)                 
-    mov $0x4, %rax                      # imm: fixnum 1
-    mov %rax, -24(%rsp)                 
+    movq %rax, -16(%rsp)                
+    movq $0x4, %rax                     # imm: fixnum 1
+    movq %rax, -24(%rsp)                
     # Load var X at -16
-    mov -16(%rsp), %rax                 
-    add -24(%rsp), %rax                 # prim: fx+
+    movq -16(%rsp), %rax                
+    addq -24(%rsp), %rax                # prim: fx+
     # LET*: Store var Y at -24
-    mov %rax, -24(%rsp)                 
+    movq %rax, -24(%rsp)                
     # Load var Y at -24
-    mov -24(%rsp), %rax                 
+    movq -24(%rsp), %rax                
     ret                                 
