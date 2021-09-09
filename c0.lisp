@@ -93,20 +93,20 @@
   (base:emit () ".globl ~A" c-entry-name)
 
   (base:emit () "#if !__CYGWIN__")
-  (base:emit () "    # Windows PECOFF doesn't have this directive.")
-  (base:emit () "    .type ~A, @function" c-entry-name)
+  (base:emit () "# Windows PECOFF doesn't have this directive.")
+  (base:emit () ".type ~A, @function" c-entry-name)
   (base:emit () "#endif")
 
   (base:emit (:label c-entry-name))
 
-  (base:emit (:cmnt ("Save C stack pointer (safe on unix/windows"))
+  (base:emit (:cmnt ("Save C stack ptr (safe on unix/win."))
              "movq %rsp, %r12")
 
   (base:emit () "#if __CYGWIN__")
-  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer. (Windows)"))
+  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer."))
              "movq %rcx, %rsp")
   (base:emit () "#else")
-  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer. (Linux)"))
+  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer."))
              "movq %rdi, %rsp")
   (base:emit () "#endif")
 

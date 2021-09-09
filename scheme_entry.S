@@ -1,15 +1,15 @@
     .text                               
     .globl scheme_entry                 
     #if !__CYGWIN__                     
-        # Windows PECOFF doesn't have this directive.
-        .type scheme_entry, @function   
+    # Windows PECOFF doesn't have this directive.
+    .type scheme_entry, @function       
     #endif                              
 scheme_entry:
-    movq %rsp, %r12                     # Save C stack pointer (safe on unix/windows
+    movq %rsp, %r12                     # Save C stack ptr (safe on unix/win.
     #if __CYGWIN__                      
-    movq %rcx, %rsp                     # Incoming arg0 -> lisp stack pointer. (Windows)
+    movq %rcx, %rsp                     # Incoming arg0 -> lisp stack pointer.
     #else                               
-    movq %rdi, %rsp                     # Incoming arg0 -> lisp stack pointer. (Linux)
+    movq %rdi, %rsp                     # Incoming arg0 -> lisp stack pointer.
     #endif                              
     call L_scheme_entry                 
     movq %r12, %rsp                     # Restore C stack pointer.
