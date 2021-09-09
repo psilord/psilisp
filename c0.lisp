@@ -91,20 +91,33 @@
 (defun emit-program-header (c-entry-name scheme-toplevel-name)
   (base:emit () ".text")
   (base:emit () ".globl ~A" c-entry-name)
+
   (base:emit () "#if !__CYGWIN__")
   (base:emit () "    # Windows PECOFF doesn't have this directive.")
   (base:emit () "    .type ~A, @function" c-entry-name)
   (base:emit () "#endif")
-  (base:emit (:label c-entry-name))
-  (base:emit (:cmnt ("Save C stack pointer"))
-             "movq %rsp, %rcx")
-  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer."))
-             "movq %rdi, %rsp")
-  (base:emit () "call ~A" scheme-toplevel-name)
-  (base:emit (:cmnt ("Restore C stack pointer."))
-             "movq %rcx, %rsp")
-  (base:emit () "ret"))
 
+  (base:emit (:label c-entry-name))
+
+  (base:emit (:cmnt ("Save C stack pointer (safe on unix/windows"))
+             "movq %rsp, %r12")
+
+  (base:emit () "#if __CYGWIN__")
+  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer. (Windows)"))
+             "movq %rcx, %rsp")
+  (base:emit () "#else")
+  (base:emit (:cmnt ("Incoming arg0 -> lisp stack pointer. (Linux)"))
+             "movq %rdi, %rsp")
+  (base:emit () "#endif")
+
+
+  (base:emit () "call ~A" scheme-toplevel-name)
+
+
+  (base:emit (:cmnt ("Restore C stack pointer."))
+             "movq %r12, %rsp")
+
+  (base:emit () "ret"))
 
 ;; -----------------------------------------
 ;; The main compiler codebase.

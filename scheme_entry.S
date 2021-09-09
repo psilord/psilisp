@@ -5,10 +5,14 @@
         .type scheme_entry, @function   
     #endif                              
 scheme_entry:
-    movq %rsp, %rcx                     # Save C stack pointer
-    movq %rdi, %rsp                     # Incoming arg0 -> lisp stack pointer.
+    movq %rsp, %r12                     # Save C stack pointer (safe on unix/windows
+    #if __CYGWIN__                      
+    movq %rcx, %rsp                     # Incoming arg0 -> lisp stack pointer. (Windows)
+    #else                               
+    movq %rdi, %rsp                     # Incoming arg0 -> lisp stack pointer. (Linux)
+    #endif                              
     call L_scheme_entry                 
-    movq %rcx, %rsp                     # Restore C stack pointer.
+    movq %r12, %rsp                     # Restore C stack pointer.
     ret                                 
 L_scheme_entry:
     movq $0x4, %rax                     # imm: fixnum 1
