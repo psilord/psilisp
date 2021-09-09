@@ -651,9 +651,13 @@
 
 (defun test (&key (program (the-program)) (output *standard-output*))
   (emit-program-to-file program)
-  (let* ((where (namestring (asdf:system-relative-pathname :psilisp "")))
-         (cmd (concatenate 'string "cd " where " && make && ./de")))
-    (uiop:run-program cmd :force-shell t :output output)))
+  (let* ((here (uiop:getcwd))
+         (there (namestring (asdf:system-relative-pathname :psilisp ""))))
+    ;; Try, with as little work as possible, to support Windows paths.
+    (uiop:chdir there)
+    (unwind-protect
+         (uiop:run-program "make && ./de" :force-shell t :output output)
+      (uiop:chdir here))))
 
 
 (defun capture-repl-output (output)
