@@ -667,10 +667,12 @@
   (let* ((here (uiop:getcwd))
          (there (namestring (asdf:system-relative-pathname :psilisp ""))))
     ;; Try, with as little work as possible, to support Windows paths.
-    (uiop:chdir there)
+    (when (/= (uiop:chdir there) 0)
+      (format t "Oops. Cannot chdir to there: ~S~%" there))
     (unwind-protect
          (uiop:run-program "make && ./de" :force-shell t :output output)
-      (uiop:chdir here))))
+      (when (/= (uiop:chdir here) 0)
+        (format t "Oops. Cannot chdir back to here: ~S" here)))))
 
 
 (defun capture-repl-output (output)
