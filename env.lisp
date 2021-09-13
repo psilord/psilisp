@@ -1,5 +1,8 @@
 (in-package #:base)
 
+;;;; TODO: COnvert this functionality into three layered packages
+;;;; on top of each other to separate concerns and API.
+
 ;; --------
 ;; Symbol Table
 ;; Also synonymous with a "frame" of variables at a scope.
@@ -101,10 +104,20 @@ scope."
 (defstruct env
   (categories (make-hash-table :test #'equal)))
 
+;; a check to ensure I don't have any typos in my environmental categories.
+(defun validate-category (category)
+  (ecase category
+    ;; NOTE: :debug, debug0, debug1 are for hand debugging, they are not part
+    ;; of the environmental semantics of the compiler.
+    ((:debug :debug0 :debug1) t)
+    ;; These are part of the compiler.
+    ((:var) t)))
+
 (defun ensure-blsymtab-in-category (env category)
   "Create an empty block structured symbol table in the environment associated
 with the category if none exists and return it. If it already exists, just
 return it. NOTE: This function does no scope opening/closing."
+  (validate-category category)
   (let ((blsymtab (gethash category (env-categories env))))
     (unless blsymtab
       (setf blsymtab (make-blsymtab)
@@ -135,7 +148,7 @@ return it. NOTE: This function does no scope opening/closing."
   (format t "Dumping Environment with ~A semantic categories:~%"
           (hash-table-count (env-categories env)))
   (maphash (lambda (category blsymtab)
-             (format t ">>> Category: ~S~%" category)
+             (format t ">>> Category: ~S <<<~%" category)
              (dump-blsymtab blsymtab))
            (env-categories env))
   (format t "End dumping Environment.~%"))
