@@ -33,6 +33,14 @@
    #:find-definition
    #:current-definitions
    #:dump-blsymtab
+   ;; Aggregate env table API
+   #:make-env
+   #:env-open-scope
+   #:env-close-scope
+   #:env-add-definition
+   #:env-find-definition
+   #:env-current-definitions
+   #:dump-env
    )
   (:local-nicknames
    (#:a #:alexandria)))
