@@ -55,19 +55,20 @@
 ;; <prim-binary-op> ::= fx+ | fx- | fx* | fx/ | fxlongand | fxlogor | fx= |
 ;;                      fx< | fx<= | fx> | fx>= | char= | char< | char<= |
 ;;                      char> | char>=
-;; <lambda> ::= (lambda (<vars>) <body>)
-;; <vars> ::= <var> <vars>
-;;        |
-;; <define> ::= (define <var> <expr>)
-;; <let> ::= (let (<let-bindings>) <body>) ;; since no special vars -> lambda
+;; <lambda> ::= (lambda (<vardecls>) <body>)
+;; <vardecls> ::= <vardecl> <vardecls>
+;;            |
+;; <vardecl> ::= <var> ;; can support more types of args as I add them.
+;; <define> ::= (define <vardecl> <expr>)
+;; <let> ::= (let (<let-bindings>) <body>)
 ;; <let-bindings> ::= <let-binding> <let-bindings>
 ;;                |
-;; <let-binding> ::= (<var> <expr>)
+;; <let-binding> ::= (<vardecl> <expr>)
 ;;               |
 ;; <letrec> ::= (let (<letrec-bindings>) <body>)
 ;; <letrec-bindings> ::= <letrec-binding> <letrec-bindings>
 ;;                   |
-;; <letrec-binding> ::= (<var> <expr>)
+;; <letrec-binding> ::= (<vardecl> <expr>)
 ;; <set!> ::= (set! <var> <expr>)
 ;; <if> ::= (if <expr> <expr> <expr>)
 ;; <begin> ::= (begin <body>) ;; special behavior with DEFINE
@@ -77,7 +78,18 @@
 ;; -----------------------------------------------------------------------
 ;; Some convenient machinery to deal with defclass types.
 ;; -----------------------------------------------------------------------
-(defmacro simple-constructor (name)
+(defmacro simple-constructor (name &rest init-args)
+  "Create a MAKE-NAME constructor that takes exactly INIT-ARGS in the order
+specified and calls MAKE-INSTANCE on the NAME type. It assumes that the
+initargs for the class are named the same as those supplied in INIT-ARGS."
+  `(defun ,(a:format-symbol :c1 "MAKE-~A" name) ,init-args
+     (make-instance ',name
+                    ,@(when init-args
+                        (mapcan (lambda (arg)
+                                  `(,(a:format-symbol :keyword arg) ,arg))
+                                init-args)))))
+
+(defmacro flexible-constructor (name)
   `(defun ,(a:format-symbol :c1 "MAKE-~A" name) (&rest init-args)
      (apply 'make-instance ',name init-args)))
 
@@ -119,7 +131,7 @@
                (syntax-p obj)
                (prim-p obj))))
 
-(simple-constructor syment)
+(flexible-constructor syment)
 
 (defun make-syment/global ()
   (make-syment :global-p t :mutable-p t
@@ -186,127 +198,130 @@ and default it to :any"
 
 (defclass toplevel (ast)
   ((%body :accessor body :initarg :body :type body)))
-(simple-constructor toplevel)
+(simple-constructor toplevel body)
 
 (defclass body (ast)
   ((%defs :accessor defs :initarg :defs :type defs)
    (%exprs :accessor exprs :initarg :exprs :type exprs)))
-(simple-constructor body)
+(simple-constructor body defs exprs)
 
 (defclass defs (ast)
   ((%def :accessor def :initarg :def :type def)
-   (%more-defs :accessor more-defs :initarg :more-defs :type defs)))
-(simple-constructor defs)
+   (%more :accessor more :initarg :more :type defs)))
+(simple-constructor defs def more)
 
 (defclass exprs (ast)
   ((%expr :accessor expr :initarg :expr :type expr)
-   (%more-exprs :accessor more-exprs :initarg :more-exprs :type exprs)))
-(simple-constructor exprs)
+   (%more :accessor more :initarg :more :type exprs)))
+(simple-constructor exprs expr more)
 
 (defclass expr (ast) ())
 
-(defclass vars (ast)
-  ((%var :accessor var :initarg :var :type var)
-   (%more-vars :accessor more-vars :initarg :more-vars :type vars)))
-(simple-constructor vars)
+(defclass vardecls (ast)
+  ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
+   (more :accessor more :initarg :more :type vardecls)))
+(simple-constructor vardecls vardecl more)
+
+;; If I add more types of vardecls, like keyword, rest, etc, subclass this.
+(defclass vardecl (ast)
+  ((%var :accessor var :initarg :var :type var)))
+(simple-constructor vardecl var)
 
 (defclass var (expr)
   ((%sym :accessor sym :initarg :sym :type symbol)))
-(simple-constructor var)
+(simple-constructor var sym)
 
 (defclass literal (expr) ())
 
 (defclass literal-fixnum (literal)
   ((%value :accessor value :initarg :value :type integer)))
-(simple-constructor literal-fixnum)
+(simple-constructor literal-fixnum value)
 
 (defclass literal-char (literal)
   ((%value :accessor value :initarg :value :type character)))
-(simple-constructor literal-char)
+(simple-constructor literal-char value)
 
 (defclass literal-bool (literal)
   ((%value :accessor value :initarg :value :type T)))
-(simple-constructor literal-bool)
+(simple-constructor literal-bool value)
 
 (defclass literal-null (literal) ())
 (simple-constructor literal-null)
 
 (defclass prim (expr)
   ((%op :accessor op :initarg :op :type var)))
-(simple-constructor prim)
+(simple-constructor prim op)
 
 (defclass prim-unary (prim)
   ((%arg0 :accessor arg0 :initarg :arg0 :type expr)))
-(simple-constructor prim-unary)
+(simple-constructor prim-unary op arg0)
 
 (defclass prim-binary (prim)
   ((%arg0 :accessor arg0 :initarg :arg0 :type expr)
    (%arg1 :accessor arg1 :initarg :arg1 :type expr)))
-(simple-constructor prim-binary)
+(simple-constructor prim-binary op arg0 arg1)
 
 (defclass syntax (expr) ())
 
 (defclass define-syntax (syntax)
-  ((%var :accessor var :initarg :var :type var)
+  ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
    (%value :accessor value :initarg :value :type expr)))
-(simple-constructor define-syntax)
+(simple-constructor define-syntax vardecl value)
 
 (defclass lambda-syntax (syntax)
-  ((%vars :accessor vars :initarg :vars :type vars)
+  ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor lambda-syntax)
+(simple-constructor lambda-syntax vardecls body)
 
 (defclass let-syntax (syntax)
   ((%bindings :accessor bindings :initarg :bindings :type let-bindings)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor let-syntax)
+(simple-constructor let-syntax bindings body)
 
 (defclass let-bindings (syntax)
   ((%binding :accessor binding :initarg :binding :type let-binding)
-   (%more-bindings :accessor more-bindings :initarg :more-bindings
-                   :type let-bindings)))
-(simple-constructor let-bindings)
+   (%more :accessor more :initarg :more :type let-bindings)))
+(simple-constructor let-bindings binding more)
 
 (defclass let-binding (syntax)
-  ((%var :accessor var :initarg :var :type var)
+  ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
    (%value :accessor value :initarg :value :type expr)))
-(simple-constructor let-binding)
+(simple-constructor let-binding vardecl value)
 
 (defclass letrec-syntax (syntax)
   ((%bindings :accessor bindings :initarg :bindings :type letrec-bindings)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor letrec-syntax)
+(simple-constructor letrec-syntax bindings body)
 
 (defclass letrec-bindings (syntax)
   ((%binding :accessor binding :initarg :binding :type letrec-binding)
-   (%more-bindings :accessor more-bindings :initarg :more-bindings
-                   :type letrec-bindings)))
-(simple-constructor letrec-bindings)
+   (%more :accessor more :initarg :more :type letrec-bindings)))
+(simple-constructor letrec-bindings binding more)
 
 (defclass letrec-binding (syntax)
-  ((%var :accessor var :initarg :var :type var)
+  ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
    (%value :accessor value :initarg :value :type expr)))
-(simple-constructor letrec-binding)
+(simple-constructor letrec-binding vardecl value)
 
 (defclass set!-syntax (syntax)
   ((%var :accessor var :initarg :var :type var)
    (%value :accessor value :initarg :value :type expr)))
-(simple-constructor set!-syntax)
+(simple-constructor set!-syntax var value)
 
 (defclass if-syntax (syntax)
   ((%choice :accessor choice :initarg :choice :type expr)
    (%consequent :accessor consequent :initarg :consequent :type expr)
    (%alternate :accessor alternate :initarg :alternate :type expr)))
-(simple-constructor if-syntax)
+(simple-constructor if-syntax choice consequent alternate)
 
 (defclass begin-syntax (syntax)
   ((%body :accessor body :initarg :body :type body)))
-(simple-constructor begin-syntax)
+(simple-constructor begin-syntax body)
 
 (defclass application (expr)
   ((%op :accessor op :initarg :op :type expr)
    (%args :accessor args :initarg :args :type exprs)))
-(simple-constructor application)
+(simple-constructor application op args)
 
 ;; -----------------------------------------------------------------------
 ;; Unparsing
@@ -347,19 +362,22 @@ and default it to :any"
 
 (defmethod unparse ((style (eql :psilisp)) indent (self defs))
   (unparse style indent (def self))
-  (unparse style indent (more-defs self)))
+  (unparse style indent (more self)))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self exprs))
   (unparse style indent (expr self))
-  (when (more-exprs self)
+  (when (more self)
     (logit " "))
-  (unparse style indent (more-exprs self)))
+  (unparse style indent (more self)))
 
-(defmethod unparse ((style (eql :psilisp)) indent (self vars))
-  (unparse style indent (var self))
-  (when (more-vars self)
+(defmethod unparse ((style (eql :psilisp)) indent (self vardecls))
+  (unparse style indent (vardecl self))
+  (when (more self)
     (logit " "))
-  (unparse style indent (more-vars self)))
+  (unparse style indent (more self)))
+
+(defmethod unparse ((style (eql :psilisp)) indent (self vardecl))
+  (unparse style indent (var self)))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self var))
   (logit "~A" (sym self)))
@@ -377,15 +395,21 @@ and default it to :any"
   (logit "NULL"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self prim))
-  (logit "(~A)" (op self)))
+  (logit "(")
+  (unparse style indent (op self))
+  (logit ")"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self prim-unary))
-  (logit "(~A " (op self))
+  (logit "(")
+  (unparse style indent (op self))
+  (logit " ")
   (unparse style indent (arg0 self))
   (logit ")"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self prim-binary))
-  (logit "(~A " (op self))
+  (logit "(")
+  (unparse style indent (op self))
+  (logit " ")
   (unparse style indent (arg0 self))
   (logit " ")
   (unparse style indent (arg1 self))
@@ -393,30 +417,30 @@ and default it to :any"
 
 (defmethod unparse ((style (eql :psilisp)) indent (self define-syntax))
   (logit "(DEFINE ")
-  (unparse style indent (var self))
+  (unparse style indent (vardecl self))
   (logit " ")
   (unparse style indent (value self))
   (logit ")"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self lambda-syntax))
   (logit "(LAMBDA (")
-  (unparse style indent (vars self))
+  (unparse style indent (vardecls self))
   (logit ") ")
   (unparse style indent (body self))
   (logit ")"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self let-binding))
   (logit "(")
-  (unparse style indent (var self))
+  (unparse style indent (vardecl self))
   (logit " ")
   (unparse style indent (value self))
   (logit ")"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self let-bindings))
   (unparse style indent (binding self))
-  (when (more-bindings self)
+  (when (more self)
     (logit " ")
-    (unparse style indent (more-bindings self))))
+    (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self let-syntax))
   (logit "(LET (")
@@ -427,16 +451,16 @@ and default it to :any"
 
 (defmethod unparse ((style (eql :psilisp)) indent (self letrec-binding))
   (logit "(")
-  (unparse style indent (var self))
+  (unparse style indent (vardecl self))
   (logit " ")
   (unparse style indent (value self))
   (logit ")"))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self letrec-bindings))
   (unparse style indent (binding self))
-  (when (more-bindings self)
+  (when (more self)
     (logit " ")
-    (unparse style indent (more-bindings self))))
+    (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self letrec-syntax))
   (logit "(LETREC (")
@@ -499,17 +523,21 @@ and default it to :any"
 (defmethod unparse ((style (eql :ast)) indent (self defs))
   (logiti indent "; ~A~%" self)
   (unparse style (1+ indent) (def self))
-  (unparse style indent (more-defs self)))
+  (unparse style indent (more self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self exprs))
   (logiti indent "; ~A~%" self)
   (unparse style (1+ indent) (expr self))
-  (unparse style indent (more-exprs self)))
+  (unparse style indent (more self)))
 
-(defmethod unparse ((style (eql :ast)) indent (self vars))
+(defmethod unparse ((style (eql :ast)) indent (self vardecls))
   (logiti indent "; ~A~%" self)
-  (unparse style (1+ indent) (var self))
-  (unparse style indent (more-vars self)))
+  (unparse style (1+ indent) (vardecl self))
+  (unparse style indent (more self)))
+
+(defmethod unparse ((style (eql :ast)) indent (self vardecl))
+  (logiti indent "; ~A~%" self)
+  (unparse style (1+ indent) (var self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self var))
   (logiti indent "; ~A | ~A~%" (sym self) self))
@@ -527,37 +555,40 @@ and default it to :any"
   (logiti indent "; ~A~%" self))
 
 (defmethod unparse ((style (eql :ast)) indent (self prim))
-  (logiti indent "; ~A 0-arg | ~A~%" (op self) self))
+  (logiti indent "; prim 0-arg | ~A~%" self)
+  (unparse style (1+ indent) (op self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self prim-unary))
-  (logiti indent "; ~A 1-arg | ~A~%" (op self) self)
+  (logiti indent "; prim 1-arg | ~A~%" self)
+  (unparse style (1+ indent) (op self))
   (unparse style (1+ indent) (arg0 self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self prim-binary))
-  (logiti indent "; ~A 2-arg | ~A~%" (op self) self)
+  (logiti indent "; prim 2-arg | ~A~%" self)
+  (unparse style (1+ indent) (op self))
   (unparse style (1+ indent) (arg0 self))
   (unparse style (1+ indent) (arg1 self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self define-syntax))
   (logiti indent "; ~A~%" self)
-  (unparse style (1+ indent) (var self))
+  (unparse style (1+ indent) (vardecl self))
   (unparse style (1+ indent) (value self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self lambda-syntax))
   (logiti indent "; ~A~%" self)
-  (unparse style (+ indent 2) (vars self))
+  (unparse style (+ indent 2) (vardecls self))
   (unparse style (1+ indent) (body self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self let-binding))
   (logiti indent "; ~A~%" self)
-  (unparse style (1+ indent) (var self))
+  (unparse style (1+ indent) (vardecl self))
   (unparse style (1+ indent) (value self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self let-bindings))
   (logiti indent "; ~A~%" self)
   (unparse style (1+ indent) (binding self))
-  (when (more-bindings self)
-    (unparse style indent (more-bindings self))))
+  (when (more self)
+    (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :ast)) indent (self let-syntax))
   (logiti indent "; ~A~%" self)
@@ -566,14 +597,14 @@ and default it to :any"
 
 (defmethod unparse ((style (eql :ast)) indent (self letrec-binding))
   (logiti indent "; ~A~%" self)
-  (unparse style (1+ indent) (var self))
+  (unparse style (1+ indent) (vardecl self))
   (unparse style (1+ indent) (value self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self letrec-bindings))
   (logiti indent "; ~A~%" self)
   (unparse style (1+ indent) (binding self))
-  (when (more-bindings self)
-    (unparse style indent (more-bindings self))))
+  (when (more self)
+    (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :ast)) indent (self letrec-syntax))
   (logiti indent "; ~A~%" self)
@@ -768,15 +799,15 @@ item and defaults to IDENTITY."
 ;; literals
 (defun pass/src->ast%literal-fixnum (env expr)
   (declare (ignore env))
-  (make-literal-fixnum :value expr))
+  (make-literal-fixnum expr))
 
 (defun pass/src->ast%literal-char (env expr)
   (declare (ignore env))
-  (make-literal-char :value expr))
+  (make-literal-char expr))
 
 (defun pass/src->ast%literal-bool (env expr)
   (declare (ignore env))
-  (make-literal-bool :value expr))
+  (make-literal-bool expr))
 
 (defun pass/src->ast%literal-null (env expr)
   (declare (ignore env expr))
@@ -787,26 +818,29 @@ item and defaults to IDENTITY."
   ;; So far, we'll let the syntax processor determine if
   ;; it needs to make a syment instead of doing it here.
   ;; TODO: Might revisit later...
-  (make-var :sym expr))
+  (make-var expr))
 
-(defun pass/src->ast%vars (env expr)
+(defun pass/src->ast%vardecl (env expr)
+  (make-vardecl (pass/src->ast%var env expr)))
+
+(defun pass/src->ast%vardecls (env expr)
   (when expr
-    (make-vars :var (pass/src->ast%var env (car expr))
-               :more-vars (pass/src->ast%vars env (cdr expr)))))
+    (make-vardecls (pass/src->ast%vardecl env (car expr))
+		   (pass/src->ast%vardecls env (cdr expr)))))
 
 (defun pass/src->ast%primitive (env expr)
   (let ((op (primitive-op expr))
         (len (length (primitive-args expr))))
     (cond
       ((= len 0)
-       (make-prim :op op))
+       (make-prim (pass/src->ast%var env op)))
       ((= len 1)
-       (make-prim-unary :op op
-                        :arg0 (pass/src->ast%expr env (primitive-arg0 expr))))
+       (make-prim-unary (pass/src->ast%var env op)
+                        (pass/src->ast%expr env (primitive-arg0 expr))))
       ((= len 2)
-       (make-prim-binary :op op
-                         :arg0 (pass/src->ast%expr env (primitive-arg0 expr))
-                         :arg1 (pass/src->ast%expr env (primitive-arg1 expr))))
+       (make-prim-binary (pass/src->ast%var env op)
+                         (pass/src->ast%expr env (primitive-arg0 expr))
+                         (pass/src->ast%expr env (primitive-arg1 expr))))
       (t
        (error "pass/src->ast%primitive: Too many args: ~S" expr)))))
 
@@ -815,8 +849,8 @@ item and defaults to IDENTITY."
   (let ((var (define-var expr))
         (value-expr (define-expr expr)))
 
-    (make-define-syntax :var (pass/src->ast%var env var)
-                        :value (pass/src->ast%expr env value-expr))))
+    (make-define-syntax (pass/src->ast%vardecl env var)
+                        (pass/src->ast%expr env value-expr))))
 
 (defun pass/src->ast%lambda-syntax (env expr)
   (let ((formals (lambda-formals expr))
@@ -827,22 +861,22 @@ item and defaults to IDENTITY."
           :do (base:add-definition env formal (make-syment/local)))
 
     (let ((lambda-node (make-lambda-syntax
-                        :vars (pass/src->ast%vars env formals)
-                        :body (pass/src->ast%body env body))))
+                        (pass/src->ast%vardecls env formals)
+                        (pass/src->ast%body env body))))
       (base:close-scope env)
       lambda-node)))
 
 (defun pass/src->ast%let-binding (env expr)
   (let ((var-form (let-binding-var expr))
         (value-form (let-binding-value expr)))
-    (make-let-binding :var (pass/src->ast%var env var-form)
-                      :value (pass/src->ast%expr env value-form))))
+    (make-let-binding (pass/src->ast%vardecl env var-form)
+                      (pass/src->ast%expr env value-form))))
 
 (defun pass/src->ast%let-bindings (env expr)
   (when expr
     (make-let-bindings
-     :binding (pass/src->ast%let-binding env (car expr))
-     :more-bindings (pass/src->ast%let-bindings env (cdr expr)))))
+     (pass/src->ast%let-binding env (car expr))
+     (pass/src->ast%let-bindings env (cdr expr)))))
 
 (defun pass/src->ast%let-syntax (env expr)
   (let* ((bindings-form (let-bindings expr))
@@ -855,23 +889,22 @@ item and defaults to IDENTITY."
     (loop :for var :in (mapcar #'first bindings-form)
           :do (base:add-definition env var (make-syment/local)))
 
-    (let ((let-node (make-let-syntax
-                     :bindings bindings
-                     :body (pass/src->ast%body env body-form))))
+    (let ((let-node (make-let-syntax bindings
+                                     (pass/src->ast%body env body-form))))
       (base:close-scope env)
       let-node)))
 
 (defun pass/src->ast%letrec-binding (env expr)
   (let ((var-form (letrec-binding-var expr))
         (value-form (letrec-binding-value expr)))
-    (make-letrec-binding :var (pass/src->ast%var env var-form)
-                         :value (pass/src->ast%expr env value-form))))
+    (make-letrec-binding (pass/src->ast%vardecl env var-form)
+                         (pass/src->ast%expr env value-form))))
 
 (defun pass/src->ast%letrec-bindings (env expr)
   (when expr
     (make-letrec-bindings
-     :binding (pass/src->ast%letrec-binding env (car expr))
-     :more-bindings (pass/src->ast%letrec-bindings env (cdr expr)))))
+     (pass/src->ast%letrec-binding env (car expr))
+     (pass/src->ast%letrec-bindings env (cdr expr)))))
 
 (defun pass/src->ast%letrec-syntax (env expr)
   (let* ((bindings-form (letrec-bindings expr))
@@ -887,8 +920,8 @@ item and defaults to IDENTITY."
             (make-letrec-syntax
              ;; Now all binding values are processed in the scope of the
              ;; variables being bound.
-             :bindings (pass/src->ast%letrec-bindings env bindings-form)
-             :body (pass/src->ast%body env body-form))))
+             (pass/src->ast%letrec-bindings env bindings-form)
+             (pass/src->ast%body env body-form))))
       (base:close-scope env)
       letrec-node)))
 
@@ -898,35 +931,40 @@ item and defaults to IDENTITY."
 
     ;; TODO: Prolly do some chicanery with env here for global vars if the
     ;; variable is not otherwise defined that we're trying to set!.
-    (make-set!-syntax :var (pass/src->ast%var env var)
-                      :value (pass/src->ast%expr env value-expr))))
+    (make-set!-syntax (pass/src->ast%var env var)
+                      (pass/src->ast%expr env value-expr))))
 
 (defun pass/src->ast%if-syntax (env expr)
-  (make-if-syntax :choice (pass/src->ast%expr env (if-condition expr))
-                  :consequent (pass/src->ast%expr env (if-conseq expr))
-                  :alternate (if (if-altern expr)
-                                 (pass/src->ast%expr env (if-altern expr))
-                                 (make-literal-null))))
+  (make-if-syntax (pass/src->ast%expr env (if-condition expr))
+                  (pass/src->ast%expr env (if-conseq expr))
+                  (if (if-altern expr)
+                      (pass/src->ast%expr env (if-altern expr))
+                      (make-literal-null))))
 
 (defun pass/src->ast%begin-syntax (env expr)
-  (make-begin-syntax :body (pass/src->ast%body env (begin-body expr))))
+  (make-begin-syntax (pass/src->ast%body env (begin-body expr))))
 
 (defun pass/src->ast%application (env expr)
-  (make-application :op (pass/src->ast%expr env (car expr))
-                    :args (pass/src->ast%exprs env (cdr expr))))
+  (make-application (pass/src->ast%expr env (car expr))
+                    (pass/src->ast%exprs env (cdr expr))))
 
 (defun pass/src->ast%expr (env expr)
   (cond
     ;; All the atomic like things so far.
 
-    ;; NULL, TRUE, and FALSE can never be rebound or used as a variable, is
-    ;; always the null object.  TODO: Enforce/typecheck this rule in LET,
-    ;; LAMBDA, etc
+    ;; NULL, TRUE, and FALSE can never be rebound or used as a variable.
+    ;;
+    ;; TODO: Enforce/typecheck this rule in LET, LAMBDA, etc
 
     ((null-p expr)
      (pass/src->ast%literal-null env expr))
     ((bool-p expr)
      (pass/src->ast%literal-bool env expr))
+
+    ((fixnum-p expr)
+     (pass/src->ast%literal-fixnum env expr))
+    ((char-p expr)
+     (pass/src->ast%literal-char env expr))
 
     ;; Variable reference...
     ((var-p expr)
@@ -934,11 +972,6 @@ item and defaults to IDENTITY."
      ;; variable is defined, etc, etc, etc.
      (pass/src->ast%var env expr))
 
-    ((fixnum-p expr)
-     (pass/src->ast%literal-fixnum env expr))
-
-    ((char-p expr)
-     (pass/src->ast%literal-char env expr))
 
 
     ;; anything in a list form: syntax, primitive, application
@@ -972,31 +1005,30 @@ item and defaults to IDENTITY."
 
 (defun pass/src->ast%exprs (env exprs)
   (when exprs
-    (make-exprs :expr (pass/src->ast%expr env (car exprs))
-                :more-exprs (pass/src->ast%exprs env (cdr exprs)))))
+    (make-exprs (pass/src->ast%expr env (car exprs))
+                (pass/src->ast%exprs env (cdr exprs)))))
 
 
 ;; TODO: Broken.
 (defun pass/src->ast%defs (env defs)
   (when defs
-    (make-defs :def (pass/src->ast%define-syntax env (car defs))
-               :more-defs (pass/src->ast%defs env (cdr defs)))))
+    (make-defs (pass/src->ast%define-syntax env (car defs))
+               (pass/src->ast%defs env (cdr defs)))))
 
 (defun pass/src->ast%body (env exprs)
   (make-body
    ;; TODO: support DEFINE regions later. It is hard because the defines can
    ;; redefine their own symbolic form and checking for that is hairy
    ;; and I don't want to do it right now.
-   :defs nil
-   :exprs (pass/src->ast%exprs env exprs)))
+   nil
+   (pass/src->ast%exprs env exprs)))
 
 (defun pass/src->ast%toplevel (env exprs)
-  (make-toplevel :body (pass/src->ast%body env exprs)))
+  (make-toplevel (pass/src->ast%body env exprs)))
 
 ;; Main entry. Convert one toplevel of an incoming source to AST.
 (defun pass/src->ast (env exprs)
   (pass/src->ast%toplevel env exprs))
-
 
 ;; -----------------------------------------------------------------------
 ;; Test compilation of a single toplevel set of forms.
