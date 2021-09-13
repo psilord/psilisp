@@ -335,6 +335,16 @@ and default it to :any"
          (make-string indent :initial-element #\Space)
          args))
 
+(defun loglvl (lvl fmt &rest args)
+  (let ((prefix (ecase lvl
+                  (:error "ERROR: ")
+                  (:warn "WARNING: ")
+                  (:debug "DEBUG: ")
+                  (:info "INFO: "))))
+    (apply #'logit (concatenate 'string prefix fmt) args)))
+
+
+
 (defmethod unparse (style indent self)
   (error "Cannot unparse a style of: ~S" style))
 
@@ -826,7 +836,7 @@ item and defaults to IDENTITY."
 (defun pass/src->ast%vardecls (env expr)
   (when expr
     (make-vardecls (pass/src->ast%vardecl env (car expr))
-		   (pass/src->ast%vardecls env (cdr expr)))))
+                   (pass/src->ast%vardecls env (cdr expr)))))
 
 (defun pass/src->ast%primitive (env expr)
   (let ((op (primitive-op expr))
@@ -968,11 +978,15 @@ item and defaults to IDENTITY."
 
     ;; Variable reference...
     ((var-p expr)
-     ;; TODO: DO something with the env here, like check to see if the
-     ;; variable is defined, etc, etc, etc.
-     (pass/src->ast%var env expr))
-
-
+     (let ((v (pass/src->ast%var env expr)))
+       ;; TODO: We should insert "uninitialized" var references for vardecls
+       ;; into the symbol table, and if we find one we should do slightly
+       ;; different behavior here as opposed to when we find NO symbol in the
+       ;; scope.
+       (unless (base:find-definition env (sym v) :scope :any)
+         (loglvl :error
+		 "ERROR: Variable reference ~A is undefined.~%" (sym v)))
+       v))
 
     ;; anything in a list form: syntax, primitive, application
     ((listp expr)
