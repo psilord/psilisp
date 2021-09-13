@@ -7,6 +7,7 @@
   :depends-on (:cl-ppcre :alexandria)
   :components ((:file "package")
                (:file "base") ;; stuff used by all compilers.
+	       (:file "env") ;; symbol table & environment modeling
 	       (:file "base-test")
                ;; Ghoulum's incremental lisp compiler
                (:file "c0")
