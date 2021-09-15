@@ -643,7 +643,7 @@ and default it to :any"
 
 (defmethod unparse ((style (eql :ast)) indent (self application))
   (logiti indent "; ~A~%" self)
-  (logiti indent "; FUNC~%")
+  (logiti indent "; OP-EXPR~%")
   (unparse style (1+ indent) (op self))
   (when (args self)
     (logiti indent "; ARGS~%")
