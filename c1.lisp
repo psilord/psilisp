@@ -174,7 +174,7 @@ exists, check to see if it is a PRED. Check the SCOPE in the block symbol table
 and default it to :any"
   (when (tagged-with-p datum expr)
     (a:when-let ((syment
-                  (base:env-find-definition env :var datum :scope scope)))
+                  (env:find-definition env :var datum :scope scope)))
       (funcall pred syment))))
 
 (defun syntax-form-p (env expr datum)
@@ -867,14 +867,14 @@ item and defaults to IDENTITY."
   (let ((formals (lambda-formals expr))
         (body (lambda-body expr)))
 
-    (base:env-open-scope env :var)
+    (env:open-scope env :var)
     (loop :for formal :in formals
-          :do (base:env-add-definition env :var formal (make-syment/local)))
+          :do (env:add-definition env :var formal (make-syment/local)))
 
     (let ((lambda-node (make-lambda-syntax
                         (pass/src->ast%vardecls env formals)
                         (pass/src->ast%body env body))))
-      (base:env-close-scope env :var)
+      (env:close-scope env :var)
       lambda-node)))
 
 (defun pass/src->ast%let-binding (env expr)
@@ -896,13 +896,13 @@ item and defaults to IDENTITY."
          (bindings (pass/src->ast%let-bindings env bindings-form)))
 
     ;; Now augment the environment for the body.
-    (base:env-open-scope env :var)
+    (env:open-scope env :var)
     (loop :for var :in (mapcar #'first bindings-form)
-          :do (base:env-add-definition env :var var (make-syment/local)))
+          :do (env:add-definition env :var var (make-syment/local)))
 
     (let ((let-node (make-let-syntax bindings
                                      (pass/src->ast%body env body-form))))
-      (base:env-close-scope env :var)
+      (env:close-scope env :var)
       let-node)))
 
 (defun pass/src->ast%letrec-binding (env expr)
@@ -923,9 +923,9 @@ item and defaults to IDENTITY."
 
     ;; Now augment the environment for the value expressions so they see
     ;; all the variables in question.
-    (base:env-open-scope env :var)
+    (env:open-scope env :var)
     (loop :for var :in (mapcar #'first bindings-form)
-          :do (base:env-add-definition env :var var (make-syment/local)))
+          :do (env:add-definition env :var var (make-syment/local)))
 
     (let ((letrec-node
             (make-letrec-syntax
@@ -933,7 +933,7 @@ item and defaults to IDENTITY."
              ;; variables being bound.
              (pass/src->ast%letrec-bindings env bindings-form)
              (pass/src->ast%body env body-form))))
-      (base:env-close-scope env :var)
+      (env:close-scope env :var)
       letrec-node)))
 
 (defun pass/src->ast%set!-syntax (env expr)
@@ -984,7 +984,7 @@ item and defaults to IDENTITY."
        ;; into the symbol table, and if we find one we should do slightly
        ;; different behavior here as opposed to when we find NO symbol in the
        ;; scope.
-       (unless (base:env-find-definition env :var (sym v) :scope :any)
+       (unless (env:find-definition env :var (sym v) :scope :any)
          (loglvl :error
                  "ERROR: Variable reference ~A is undefined.~%" (sym v)))
        v))
@@ -1050,7 +1050,7 @@ item and defaults to IDENTITY."
 ;; -----------------------------------------------------------------------
 
 (defun init-global-environment ()
-  (let ((env (base:make-env))
+  (let ((env (env:make-env :var))
         (syntax-symbols
           '(define if begin lambda let letrec set! true false null))
         (prim-symbols
@@ -1064,11 +1064,11 @@ item and defaults to IDENTITY."
             char= char< char<= char> char>=)))
 
     ;; Construct initial environment
-    (base:env-open-scope env :var)
+    (env:open-scope env :var)
     (loop :for sym :in syntax-symbols
-          :do (base:env-add-definition env :var sym (make-syment/syntax)))
+          :do (env:add-definition env :var sym (make-syment/syntax)))
     (loop :for sym :in prim-symbols
-          :do (base:env-add-definition env :var sym (make-syment/prim)))
+          :do (env:add-definition env :var sym (make-syment/prim)))
 
     ;; global :var scope left open!
     env))
@@ -1080,6 +1080,6 @@ item and defaults to IDENTITY."
 
       (unparse unparse-style 0 ast)
 
-      (base:env-close-scope env :var)
+      (env:close-scope env :var)
 
       ast)))

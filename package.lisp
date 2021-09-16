@@ -12,38 +12,58 @@
    #:unique-labels
    ;; Emitting assembly instructions as strings
    #:emit
-   ;; environment handling
-   ;; symbol table API
+   )
+  (:local-nicknames
+   (#:a #:alexandria)))
+
+;; Symbol table
+(defpackage #:st
+  (:use #:cl)
+  (:export
    #:symtab
-   #:symtab-syments
-   #:symtab-scope-id
    #:make-symtab
-   #:symtab-p
+   #:scope-id
    #:insert-symbol
    #:lookup-symbol
+   #:all-names
+   #:all-symbols
    #:dump-symtab
-   ;; block symbol table API
+   )
+
+  (:local-nicknames
+   (#:a #:alexandria)))
+
+;; Block structure symbol table
+(defpackage #:bst
+  (:use #:cl)
+  (:export
    #:blsymtab
-   #:blsymtab-frames
    #:make-blsymtab
-   #:blsymtab-p
    #:open-scope
    #:close-scope
    #:add-definition
    #:find-definition
    #:current-definitions
    #:dump-blsymtab
-   ;; Aggregate env table API
+   )
+  (:local-nicknames
+   (#:a #:alexandria)))
+
+;; Environment table built with block structured tables
+(defpackage #:env
+  (:use #:cl)
+  (:export
    #:make-env
-   #:env-open-scope
-   #:env-close-scope
-   #:env-add-definition
-   #:env-find-definition
-   #:env-current-definitions
+   #:open-scope
+   #:close-scope
+   #:add-definition
+   #:find-definition
+   #:current-definitions
    #:dump-env
    )
   (:local-nicknames
    (#:a #:alexandria)))
+
 
 ;; Ghoulum's scheme implementation.
 (defpackage #:c0

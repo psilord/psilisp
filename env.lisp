@@ -1,96 +1,4 @@
-(in-package #:base)
-
-;;;; TODO: COnvert this functionality into three layered packages
-;;;; on top of each other to separate concerns and API.
-
-;; --------
-;; Symbol Table
-;; Also synonymous with a "frame" of variables at a scope.
-;; --------
-
-(defstruct symtab
-  ;; hash table
-  ;; Key: var-spec
-  ;; Value: syment
-  (syments (make-hash-table :test #'equal))
-  ;; Depth from the empty environment for this symbol table.
-  (scope-id 0)
-  )
-
-(defun insert-symbol (st var-spec syment)
-  (setf (gethash var-spec (symtab-syments st)) syment))
-
-(defun lookup-symbol (st var-spec)
-  (gethash var-spec (symtab-syments st)))
-
-(defun dump-symtab (st)
-  (format t " Dumping symbol table (scope-id: ~A):~%" (symtab-scope-id st))
-  (maphash (lambda (var-spec syment)
-             (format t "   ~A -> ~A~%" var-spec syment))
-           (symtab-syments st)))
-
-;; --------
-;; Block structured symbol table
-;; --------
-
-(defstruct blsymtab
-  ;; a stack of frames throughout the program
-  (frames nil))
-
-(defun open-scope (bst)
-  "Add a new innermost frame to the environment."
-  (let* ((curr-inner (first (blsymtab-frames bst)))
-         (new-inner (make-symtab :scope-id
-                                 (if curr-inner
-                                     (1+ (symtab-scope-id curr-inner))
-                                     0))))
-    (push new-inner (blsymtab-frames bst))))
-
-(defun close-scope (bst)
-  "Remove the innermost frame from the environment."
-  (pop (blsymtab-frames bst)))
-
-(defun add-definition (bst var-spec sym)
-  "Add a definition to the innermost scope."
-  (let ((st (first (blsymtab-frames bst))))
-    (unless st
-      (error "add-definition: There are no open scopes!"))
-    (insert-symbol st var-spec sym)))
-
-(defun find-definition (bst var-spec &key (scope :inner))
-  "Search the BLSYMTAB for the definition of VAR-SPEC. If SCOPE is :INNER only
-to inner most scope is searched, if it is :ANY then all scopes are searched in
-order until one is found.  Return two values of the discovered syment, or NIL
-of non is found during lookup and the associated symbol table in which it was
-found."
-  (ecase scope
-    (:inner
-     (let ((st (first (blsymtab-frames bst))))
-       (when st
-         (values (lookup-symbol st var-spec) st))))
-    (:any
-     (loop :for st :in (blsymtab-frames bst)
-           :for sym = (lookup-symbol st var-spec)
-           :when sym
-             :return (values sym st)))))
-
-(defun current-definitions (bst &key (scope :inner))
-  "Return a list of the visible lexical variables defined in the specified
-scope."
-  (case scope
-    (:inner
-     (let ((inner (first (blsymtab-frames bst))))
-       (when inner
-         (a:hash-table-keys (symtab-syments inner)))))
-    (:any
-     (reduce #'union (mapcar (lambda (st)
-                               (a:hash-table-keys (symtab-syments st)))
-                             (blsymtab-frames bst))))))
-
-(defun dump-blsymtab (bst)
-  (format t "Dumping Block Structured Symbol Table.~%")
-  (loop :for st :in (blsymtab-frames bst)
-        :do (dump-symtab st)))
+(in-package #:env)
 
 ;; --------
 ;; Environment table.
@@ -101,54 +9,63 @@ scope."
 ;; Used to manage all symbol table needs for whatever semantic namespace
 ;; I need.
 ;; --------
-(defstruct env
-  (categories (make-hash-table :test #'equal)))
+(defclass env ()
+  ((%defined-categories :accessor defined-categories
+			:initarg :defined-categories)
+   (%categories :accessor categories
+		:initarg :categories
+		:initform (make-hash-table :test #'equal))))
+
+(defun make-env (&rest valid-categories)
+  (make-instance 'env
+		 :defined-categories
+		 (let ((def-cats (make-hash-table :test #'equal)))
+		   (dolist (vc valid-categories)
+		     (setf (gethash vc def-cats) t))
+		   def-cats)))
 
 ;; a check to ensure I don't have any typos in my environmental categories.
-(defun validate-category (category)
-  (ecase category
-    ;; NOTE: :debug, debug0, debug1 are for hand debugging, they are not part
-    ;; of the environmental semantics of the compiler.
-    ((:debug :debug0 :debug1) t)
-    ;; These are part of the compiler.
-    ((:var) t)))
+(defun valid-category-p (env category)
+  (gethash category (defined-categories env)))
 
 (defun ensure-blsymtab-in-category (env category)
   "Create an empty block structured symbol table in the environment associated
 with the category if none exists and return it. If it already exists, just
 return it. NOTE: This function does no scope opening/closing."
-  (validate-category category)
-  (let ((blsymtab (gethash category (env-categories env))))
+  (unless (valid-category-p env category)
+    (error "ENV: Category ~S is not valid for this environment." category))
+
+  (let ((blsymtab (gethash category (categories env))))
     (unless blsymtab
-      (setf blsymtab (make-blsymtab)
-            (gethash category (env-categories env)) blsymtab))
+      (setf blsymtab (bst:make-blsymtab)
+            (gethash category (categories env)) blsymtab))
     blsymtab))
 
-(defun env-open-scope (env category)
+(defun open-scope (env category)
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
-    (open-scope blsymtab)))
+    (bst:open-scope blsymtab)))
 
-(defun env-close-scope (env category)
+(defun close-scope (env category)
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
-    (close-scope blsymtab)))
+    (bst:close-scope blsymtab)))
 
-(defun env-add-definition (env category var-spec sym)
+(defun add-definition (env category name sym)
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
-    (add-definition blsymtab var-spec sym)))
+    (bst:add-definition blsymtab name sym)))
 
-(defun env-find-definition (env category var-spec &key (scope :inner))
+(defun find-definition (env category name &key (scope :inner))
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
-    (find-definition blsymtab var-spec :scope scope)))
+    (bst:find-definition blsymtab name :scope scope)))
 
-(defun env-current-definitions (env category &key (scope :inner))
+(defun current-definitions (env category &key (scope :inner))
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
-    (current-definitions blsymtab :scope scope)))
+    (bst:current-definitions blsymtab :scope scope)))
 
 (defun dump-env (env)
   (format t "Dumping Environment with ~A semantic categories:~%"
-          (hash-table-count (env-categories env)))
+          (hash-table-count (categories env)))
   (maphash (lambda (category blsymtab)
              (format t ">>> Category: ~S <<<~%" category)
-             (dump-blsymtab blsymtab))
-           (env-categories env))
+             (bst:dump-blsymtab blsymtab))
+           (categories env))
   (format t "End dumping Environment.~%"))
