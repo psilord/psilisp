@@ -893,7 +893,7 @@ item and defaults to IDENTITY."
       (seq-iter vardecls
                 (lambda (vdcls)
                   (let* ((var (var (vardecl vdcls)))
-			 (id (id var))
+                         (id (id var))
                          (exists (env:find-definition env :var id)))
                     (when exists
                       ;; TODO: Handle these errors better or in a different
@@ -901,7 +901,7 @@ item and defaults to IDENTITY."
                       (error "lambda formal ~A defined more than once." id))
 
                     (let ((syment (make-syment/local)))
-		      (setf (bound-p syment) t)
+                      (setf (bound-p syment) t)
                       (env:add-definition env :var id syment)
                       (setf (syment var) syment)))))
 
