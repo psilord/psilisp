@@ -122,14 +122,16 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
    ))
 ;; We'll see if I like this for now...
 (defmethod print-object ((obj syment) str)
-  (call-next-method)
-  #++(print-unreadable-object (obj str :type t :identity nil)
-       (format str "G ~A, M ~A, MD ~A, S ~A, P ~A"
-               (global-p obj)
-               (mutable-p obj)
-               (mutated-p obj)
-               (syntax-p obj)
-               (prim-p obj))))
+  #++(call-next-method)
+  (print-unreadable-object (obj str :type nil :identity t)
+    (format str
+            "SYM g~:[F~;T~]m~:[F~;T~]mu~:[F~;T~]s~:[F~;T~]p~:[F~;T~]b~:[F~;T~]"
+            (global-p obj)
+            (mutable-p obj)
+            (mutated-p obj)
+            (syntax-p obj)
+            (prim-p obj)
+            (bound-p obj))))
 
 (flexible-constructor syment)
 
@@ -193,9 +195,13 @@ and default it to :any"
 ;; to keep track of the types in the AST node slots.
 ;; -----------------------------------------------------------------------
 
+(defgeneric seq-iter (seq-obj func))
 (defgeneric unparse (style indent node)) ;; unparse back into psilisp or other
 
 (defclass ast () ())
+
+(defclass seq () ;; mixin for sequences like vardecls, etc.
+  ((%more :accessor more :initarg :more)))
 
 (defclass toplevel (ast)
   ((%body :accessor body :initarg :body :type body)))
@@ -206,19 +212,19 @@ and default it to :any"
    (%exprs :accessor exprs :initarg :exprs :type exprs)))
 (simple-constructor body defs exprs)
 
-(defclass defs (ast)
+(defclass defs (ast seq)
   ((%def :accessor def :initarg :def :type def)
    (%more :accessor more :initarg :more :type defs)))
 (simple-constructor defs def more)
 
-(defclass exprs (ast)
+(defclass exprs (ast seq)
   ((%expr :accessor expr :initarg :expr :type expr)
    (%more :accessor more :initarg :more :type exprs)))
 (simple-constructor exprs expr more)
 
 (defclass expr (ast) ())
 
-(defclass vardecls (ast)
+(defclass vardecls (ast seq)
   ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
    (more :accessor more :initarg :more :type vardecls)))
 (simple-constructor vardecls vardecl more)
@@ -229,8 +235,9 @@ and default it to :any"
 (simple-constructor vardecl var)
 
 (defclass var (expr)
-  ((%sym :accessor sym :initarg :sym :type symbol)))
-(simple-constructor var sym)
+  ((%id :accessor id :initarg :id :type symbol)
+   (%syment :accessor syment :initarg :syment :type syment)))
+(simple-constructor var id syment)
 
 (defclass literal (expr) ())
 
@@ -279,7 +286,7 @@ and default it to :any"
    (%body :accessor body :initarg :body :type body)))
 (simple-constructor let-syntax bindings body)
 
-(defclass let-bindings (syntax)
+(defclass let-bindings (syntax seq)
   ((%binding :accessor binding :initarg :binding :type let-binding)
    (%more :accessor more :initarg :more :type let-bindings)))
 (simple-constructor let-bindings binding more)
@@ -294,7 +301,7 @@ and default it to :any"
    (%body :accessor body :initarg :body :type body)))
 (simple-constructor letrec-syntax bindings body)
 
-(defclass letrec-bindings (syntax)
+(defclass letrec-bindings (syntax seq)
   ((%binding :accessor binding :initarg :binding :type letrec-binding)
    (%more :accessor more :initarg :more :type letrec-bindings)))
 (simple-constructor letrec-bindings binding more)
@@ -325,7 +332,7 @@ and default it to :any"
 (simple-constructor application op args)
 
 ;; -----------------------------------------------------------------------
-;; Unparsing
+;; Utils
 ;; -----------------------------------------------------------------------
 
 (defun logit (fmt &rest args)
@@ -343,6 +350,30 @@ and default it to :any"
                   (:debug "DEBUG: ")
                   (:info "INFO: "))))
     (apply #'logit (concatenate 'string prefix fmt) args)))
+
+(defmethod seq-iter ((seq-obj seq) func)
+  (funcall func seq-obj)
+  (when (more seq-obj)
+    (seq-iter (more seq-obj) func)))
+
+(defun collect-prefix (prefixp lst &key (key #'identity))
+  "Return two values. The first value is the maximal prefix of the LST when
+each item from left to right is tested with PREFIXP. The second value is the
+cdr of the list which includes the first item that failed the PREFIXP test. The
+second list MAY contain items that PREFIX would succeed on--but wouldn't be
+part of the prefix Accepts keyword: :KEY which supplies a key function into the
+item and defaults to IDENTITY."
+  (labels ((collect (lst accum)
+             (let* ((entry (car lst))
+                    (item (funcall key entry)))
+               (if (funcall prefixp item)
+                   (collect (cdr lst) (cons entry accum))
+                   (values (reverse accum) lst)))))
+    (collect lst nil)))
+
+;; -----------------------------------------------------------------------
+;; Unparsing
+;; -----------------------------------------------------------------------
 
 
 
@@ -391,7 +422,7 @@ and default it to :any"
   (unparse style indent (var self)))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self var))
-  (logit "~A" (sym self)))
+  (logit "~A" (id self)))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self literal-fixnum))
   (logit "~S" (value self)))
@@ -551,7 +582,7 @@ and default it to :any"
   (unparse style (1+ indent) (var self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self var))
-  (logiti indent "; ~A | ~A~%" (sym self) self))
+  (logiti indent "; ~A | ~A @ ~A~%" (id self) self (syment self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self literal-fixnum))
   (logiti indent "; ~S | ~A~%" (value self) self))
@@ -650,24 +681,6 @@ and default it to :any"
     (unparse style (1+ indent) (args self))))
 
 
-;; -----------------------------------------------------------------------
-;; Utils
-;; -----------------------------------------------------------------------
-
-(defun collect-prefix (prefixp lst &key (key #'identity))
-  "Return two values. The first value is the maximal prefix of the LST when
-each item from left to right is tested with PREFIXP. The second value is the
-cdr of the list which includes the first item that failed the PREFIXP test. The
-second list MAY contain items that PREFIX would succeed on--but wouldn't be
-part of the prefix Accepts keyword: :KEY which supplies a key function into the
-item and defaults to IDENTITY."
-  (labels ((collect (lst accum)
-             (let* ((entry (car lst))
-                    (item (funcall key entry)))
-               (if (funcall prefixp item)
-                   (collect (cdr lst) (cons entry accum))
-                   (values (reverse accum) lst)))))
-    (collect lst nil)))
 
 
 ;; -----------------------------------------------------------------------
@@ -826,10 +839,10 @@ item and defaults to IDENTITY."
 
 (defun pass/src->ast%var (env expr)
   (declare (ignore env))
-  ;; So far, we'll let the syntax processor determine if
-  ;; it needs to make a syment instead of doing it here.
-  ;; TODO: Might revisit later...
-  (make-var expr))
+  ;; Note: We let whomever created this var set up and fill in the syment
+  ;; associated with it since it knows the context of use, like a decl or a
+  ;; rederence.
+  (make-var expr nil))
 
 (defun pass/src->ast%vardecl (env expr)
   (make-vardecl (pass/src->ast%var env expr)))
@@ -840,20 +853,26 @@ item and defaults to IDENTITY."
                    (pass/src->ast%vardecls env (cdr expr)))))
 
 (defun pass/src->ast%primitive (env expr)
-  (let ((op (primitive-op expr))
+  (let ((op-var (pass/src->ast%var env (primitive-op expr)))
         (len (length (primitive-args expr))))
+
+    ;; Known reference to a primitive symbol.
+    (setf (syment op-var)
+          (env:find-definition env :var (id op-var) :scope :any))
+
     (cond
       ((= len 0)
-       (make-prim (pass/src->ast%var env op)))
+       (make-prim op-var))
       ((= len 1)
-       (make-prim-unary (pass/src->ast%var env op)
+       (make-prim-unary op-var
                         (pass/src->ast%expr env (primitive-arg0 expr))))
       ((= len 2)
-       (make-prim-binary (pass/src->ast%var env op)
+       (make-prim-binary op-var
                          (pass/src->ast%expr env (primitive-arg0 expr))
                          (pass/src->ast%expr env (primitive-arg1 expr))))
       (t
        (error "pass/src->ast%primitive: Too many args: ~S" expr)))))
+
 
 ;; TODO: Not used yet.
 (defun pass/src->ast%define-syntax (env expr)
@@ -868,14 +887,29 @@ item and defaults to IDENTITY."
         (body (lambda-body expr)))
 
     (env:open-scope env :var)
-    (loop :for formal :in formals
-          :do (env:add-definition env :var formal (make-syment/local)))
 
-    (let ((lambda-node (make-lambda-syntax
-                        (pass/src->ast%vardecls env formals)
-                        (pass/src->ast%body env body))))
-      (env:close-scope env :var)
-      lambda-node)))
+    (let ((vardecls (pass/src->ast%vardecls env formals))) ;; process formals
+      ;; put them into the scope.
+      (seq-iter vardecls
+                (lambda (vdcls)
+                  (let* ((var (var (vardecl vdcls)))
+			 (id (id var))
+                         (exists (env:find-definition env :var id)))
+                    (when exists
+                      ;; TODO: Handle these errors better or in a different
+                      ;; pass
+                      (error "lambda formal ~A defined more than once." id))
+
+                    (let ((syment (make-syment/local)))
+		      (setf (bound-p syment) t)
+                      (env:add-definition env :var id syment)
+                      (setf (syment var) syment)))))
+
+      ;; process body in the new scope.
+      (let ((lambda-node
+              (make-lambda-syntax vardecls (pass/src->ast%body env body))))
+        (env:close-scope env :var)
+        lambda-node))))
 
 (defun pass/src->ast%let-binding (env expr)
   (let ((var-form (let-binding-var expr))
@@ -984,9 +1018,9 @@ item and defaults to IDENTITY."
        ;; into the symbol table, and if we find one we should do slightly
        ;; different behavior here as opposed to when we find NO symbol in the
        ;; scope.
-       (unless (env:find-definition env :var (sym v) :scope :any)
+       (unless (env:find-definition env :var (id v) :scope :any)
          (loglvl :error
-                 "ERROR: Variable reference ~A is undefined.~%" (sym v)))
+                 "ERROR: Variable reference ~A is undefined.~%" (id v)))
        v))
 
     ;; anything in a list form: syntax, primitive, application
