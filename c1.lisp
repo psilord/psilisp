@@ -986,7 +986,7 @@ item and defaults to IDENTITY."
           :for syment = (make-syment/local)
           :do (setf (bound-p syment) t ;; TODO: seems wrong.
                     (mutated-p syment) t) ;; have to mutate binding!
-              ;; TODO: observe multiple definitions.
+              ;; TODO: observe multiple definition error.
               (env:add-definition env :var var syment))
 
     ;; Then we process the bindings within this new scope.
