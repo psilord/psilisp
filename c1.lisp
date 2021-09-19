@@ -148,12 +148,12 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
 (defun make-syment/syntax ()
   (make-syment :global-p t :mutable-p nil
                :mutated-p nil :syntax-p t
-               :prim-p nil))
+               :prim-p nil :bound-p t))
 
 (defun make-syment/prim ()
   (make-syment :global-p t :mutable-p nil
                :mutated-p nil :syntax-p nil
-               :prim-p t))
+               :prim-p t :bound-p t))
 
 ;; -----------------------------------------------------------------------
 ;; Tagged list handling
@@ -350,6 +350,8 @@ and default it to :any"
                   (:debug "DEBUG: ")
                   (:info "INFO: "))))
     (apply #'logit (concatenate 'string prefix fmt) args)))
+
+(defmethod seq-iter (seq-obj func))
 
 (defmethod seq-iter ((seq-obj seq) func)
   (funcall func seq-obj)
@@ -764,8 +766,12 @@ item and defaults to IDENTITY."
   (second expr))
 (defun let-binding-var (binding)
   (first binding))
+(defun let-binding-vars (bindings)
+  (mapcar #'let-binding-var bindings))
 (defun let-binding-value (binding)
   (second binding))
+(defun let-binding-values (bindings)
+  (mapcar #'let-binding-value bindings))
 (defun let-body (expr)
   (cddr expr))
 
@@ -775,8 +781,12 @@ item and defaults to IDENTITY."
   (second expr))
 (defun letrec-binding-var (binding)
   (first binding))
+(defun letrec-binding-vars (bindings)
+  (mapcar #'letrec-binding-var bindings))
 (defun letrec-binding-value (binding)
   (second binding))
+(defun letrec-binding-values (bindings)
+  (mapcar #'letrec-binding-value bindings))
 (defun letrec-body (expr)
   (cddr expr))
 
@@ -926,14 +936,28 @@ item and defaults to IDENTITY."
 (defun pass/src->ast%let-syntax (env expr)
   (let* ((bindings-form (let-bindings expr))
          (body-form (let-body expr))
-         ;; convert the bindings to their AST form, using the current env.
+         ;; Firt convert the bindings to their AST form,
+         ;; ensuring the value expressions are using the current env.
          (bindings (pass/src->ast%let-bindings env bindings-form)))
 
-    ;; Now augment the environment for the body.
+    ;; Now augment the environment for the body with the new variables.
     (env:open-scope env :var)
-    (loop :for var :in (mapcar #'first bindings-form)
-          :do (env:add-definition env :var var (make-syment/local)))
+    (seq-iter bindings
+              (lambda (bdngs)
+                (let* ((var (var (vardecl (binding bdngs))))
+                       (id (id var))
+                       (exists (env:find-definition env :var id)))
+                  (when exists
+                    ;; TODO: Handle these errors better or in a different
+                    ;; pass
+                    (error "LET: ~A defined more than once." id))
 
+                  (let ((syment (make-syment/local)))
+                    (setf (bound-p syment) t)
+                    (env:add-definition env :var id syment)
+                    (setf (syment var) syment)))))
+
+    ;; Translate the body with the new vars in scope.
     (let ((let-node (make-let-syntax bindings
                                      (pass/src->ast%body env body-form))))
       (env:close-scope env :var)
@@ -953,31 +977,49 @@ item and defaults to IDENTITY."
 
 (defun pass/src->ast%letrec-syntax (env expr)
   (let* ((bindings-form (letrec-bindings expr))
+         (binding-vars (letrec-binding-vars bindings-form))
          (body-form (letrec-body expr)))
 
-    ;; Now augment the environment for the value expressions so they see
-    ;; all the variables in question.
+    ;; First, we find and insert all unbound variables into the symbol table.
     (env:open-scope env :var)
-    (loop :for var :in (mapcar #'first bindings-form)
-          :do (env:add-definition env :var var (make-syment/local)))
+    (loop :for var :in binding-vars
+          :for syment = (make-syment/local)
+          :do (setf (bound-p syment) t ;; TODO: seems wrong.
+                    (mutated-p syment) t) ;; have to mutate binding!
+              ;; TODO: observe multiple definitions.
+              (env:add-definition env :var var syment))
 
-    (let ((letrec-node
-            (make-letrec-syntax
-             ;; Now all binding values are processed in the scope of the
-             ;; variables being bound.
-             (pass/src->ast%letrec-bindings env bindings-form)
-             (pass/src->ast%body env body-form))))
-      (env:close-scope env :var)
-      letrec-node)))
+    ;; Then we process the bindings within this new scope.
+    (let ((bindings (pass/src->ast%letrec-bindings env bindings-form)))
+      ;; Now, we must fixup the bindings vardecl to point to the right thing.
+      (seq-iter bindings
+                (lambda (bndgs)
+                  (let* ((var (var (vardecl (binding bndgs))))
+                         (id (id var))
+                         (syment (env:find-definition env :var id)))
+                    (setf (syment var) syment))))
+
+      (let ((letrec-node
+              (make-letrec-syntax
+               ;; Now all binding values are processed in the scope of the
+               ;; variables being bound.
+               bindings
+               (pass/src->ast%body env body-form))))
+        (env:close-scope env :var)
+        letrec-node))))
 
 (defun pass/src->ast%set!-syntax (env expr)
-  (let ((var (set!-var expr))
-        (value-expr (set!-expr expr)))
+  (let ((var (pass/src->ast%var env (set!-var expr)))
+        (value (pass/src->ast%expr env (set!-expr expr))))
 
-    ;; TODO: Prolly do some chicanery with env here for global vars if the
-    ;; variable is not otherwise defined that we're trying to set!.
-    (make-set!-syntax (pass/src->ast%var env var)
-                      (pass/src->ast%expr env value-expr))))
+    ;; poke in a global variable if nothing in local scope.
+    (let* ((syment (env:find-definition env :var (id var) :scope :any))
+           (syment (if syment syment (make-syment/global))))
+      (setf (mutated-p syment) t
+            (bound-p syment) t
+            (syment var) syment))
+
+    (make-set!-syntax var value)))
 
 (defun pass/src->ast%if-syntax (env expr)
   (make-if-syntax (pass/src->ast%expr env (if-condition expr))
@@ -1018,10 +1060,14 @@ item and defaults to IDENTITY."
        ;; into the symbol table, and if we find one we should do slightly
        ;; different behavior here as opposed to when we find NO symbol in the
        ;; scope.
-       (unless (env:find-definition env :var (id v) :scope :any)
-         (loglvl :error
-                 "ERROR: Variable reference ~A is undefined.~%" (id v)))
-       v))
+       (let ((syment (env:find-definition env :var (id v) :scope :any)))
+         (unless syment
+           (loglvl :error
+                   "ERROR: Variable reference ~A is undefined.~%" (id v)))
+
+         ;; Now finally bind the variable to the symbol table entry.
+         (setf (syment v) syment)
+         v)))
 
     ;; anything in a list form: syntax, primitive, application
     ((listp expr)
