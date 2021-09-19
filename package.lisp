@@ -44,6 +44,7 @@
    #:add-definition
    #:find-definition
    #:current-definitions
+   #:current-scope
    #:dump-blsymtab
    )
   (:local-nicknames
@@ -59,6 +60,7 @@
    #:add-definition
    #:find-definition
    #:current-definitions
+   #:current-scope
    #:dump-env
    )
   (:local-nicknames

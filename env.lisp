@@ -61,6 +61,10 @@ return it. NOTE: This function does no scope opening/closing."
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
     (bst:current-definitions blsymtab :scope scope)))
 
+(defun current-scope (env category) ;; always the :inner scope.
+  (let ((blsymtab (ensure-blsymtab-in-category env category)))
+    (bst:current-scope blsymtab)))
+
 (defun dump-env (env)
   (format t "Dumping Environment with ~A semantic categories:~%"
           (hash-table-count (categories env)))

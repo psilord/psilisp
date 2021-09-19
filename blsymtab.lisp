@@ -61,6 +61,9 @@ scope."
      (reduce #'union (mapcar (lambda (st) (st:all-names st))
                              (frames bst))))))
 
+(defun current-scope (bst)
+  (car (frames bst)))
+
 (defun dump-blsymtab (bst)
   (format t "Dumping Block Structured Symbol Table.~%")
   (loop :for st :in (frames bst)
