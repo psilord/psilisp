@@ -12,7 +12,7 @@
 ;; -----------------------------------------------------------------------
 ;; <toplevel> ::= <body>
 ;; <body> ::= <defs> <exprs>
-;; <defs> ::= <def> <defs>
+;; <defs> ::= <define> <defs>
 ;;        |
 ;; <exprs> ::= <expr> <exprs>
 ;;         |
@@ -198,10 +198,10 @@ and default it to :any"
 (defgeneric seq-iter (seq-obj func))
 (defgeneric unparse (style indent node)) ;; unparse back into psilisp or other
 
-(defclass ast () ())
-
 (defclass seq () ;; mixin for sequences like vardecls, etc.
   ((%more :accessor more :initarg :more)))
+
+(defclass ast () ())
 
 (defclass toplevel (ast)
   ((%body :accessor body :initarg :body :type body)))
@@ -980,7 +980,7 @@ item and defaults to IDENTITY."
          (binding-vars (letrec-binding-vars bindings-form))
          (body-form (letrec-body expr)))
 
-    ;; First, we find and insert all unbound variables into the symbol table.
+    ;; First, we find and insert all declaring variables into the symbol table.
     (env:open-scope env :var)
     (loop :for var :in binding-vars
           :for syment = (make-syment/local)
@@ -1015,6 +1015,12 @@ item and defaults to IDENTITY."
     ;; poke in a global variable if nothing in local scope.
     (let* ((syment (env:find-definition env :var (id var) :scope :any))
            (syment (if syment syment (make-syment/global))))
+
+      (unless (mutable-p syment)
+        (error "ERROR: Variable ~A is not mutable via SET!" (id var)))
+
+      ;; NOTE: This automatically performs a "mutable pass" via the symbol
+      ;; table references.
       (setf (mutated-p syment) t
             (bound-p syment) t
             (syment var) syment))
@@ -1024,6 +1030,8 @@ item and defaults to IDENTITY."
 (defun pass/src->ast%if-syntax (env expr)
   (make-if-syntax (pass/src->ast%expr env (if-condition expr))
                   (pass/src->ast%expr env (if-conseq expr))
+                  ;; TODO: Figure out good default for no alternate, it has a
+                  ;; type inference ramification too, etc, etc.
                   (if (if-altern expr)
                       (pass/src->ast%expr env (if-altern expr))
                       (make-literal-null))))
