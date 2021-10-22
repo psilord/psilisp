@@ -55,6 +55,8 @@
 ;; ;;;;
 
 ;; Fixnum: Tag #b0
+;; ===============
+;;
 ;; To convert a fixnum to a hardware integer, shift right 1 bit.
 ;; To convert a hardware integer to a fixnum, shift left 1 bit.
 ;; If it overflows during the shift, convert to bignum.
@@ -62,6 +64,8 @@
 ;; TODO: Tedious exmaple.
 
 ;; Cons Cell: Tag #b0001
+;; =====================
+;;
 ;; It consists of two adjacent 8 byte quantities whose car is
 ;; aligned on 16 byte boundary
 ;; Example cons cell in memory:
