@@ -2,18 +2,69 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Explorations of hardware representations of value types and tagged
-;; pointer types.
+;; pointer types. Derived initially from C0 compiler, but modified heavily
+;; for the C1 compiler.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; ;;;;
+;; Narrow Tags (64-bit architecture)
+;; ;;;;
+
+;; Fixnum:          | 63-bit fixnum  | XXX0
+;; Cons Cell        | 60-bit address | 0001
+;; Closure:         | 60-bit address | 0011
+;; UNUSED:          | <whatever>     | 0101 TODO: good use for this?
+;; Symbol:          | 60-bit address | 0111
+;; Array:           | 60-bit address | 1001 (full of same type immediate)
+;; TaggedArray:     | 60-bit address | 1011 (full of tagged pointers only)
+;;
+;; OtherImm tag:    | <whatever>     | 1101
+;; Wide tag:        | <whatever>     | 1111
+
+;; ;;;;
+;; Other immediates
+;; ;;;;
+
+;; ASCII char:      | 16 x 0 | 8-bit char | 0000 | OtherImm Tag TODO: UTF-8
+;; False:           | 24 x 0              | 0010 | OtherImm Tag
+;; True:            | 24 x 0              | 0011 | OtherImm Tag
+;; Empty List:      | 24 x 0              | 0100 | OtherImm Tag
+;; eof:             | 24 x 0              | 0101 | OtherImm Tag
+;; void:            | 24 x 0              | 0110 | OtherImm Tag
+;; unbound:         | 24 x 0              | 0111 | OtherImm Tag
+
+;; ;;;;
+;; Wide Tags
+;; ;;;;
+
+;; Executable Code: | 24 x 0 | 0000 | Wide Tag
+;; Stack:           | 24 x 0 | 0001 | Wide Tag
+;; Symbol Table:    | 24 x 0 | 0010 | Wide Tag
+;; Hash Table:      | 24 x 0 | 0011 | Wide Tag
+;; Bignum:          | 24 x 0 | 0100 | Wide Tag
+;; Rational:        | 24 x 0 | 0101 | Wide Tag
+;; Complex:         | 24 x 0 | 0110 | Wide Tag
+;;
+;; TODO: Add more, such as, single-floats and double-floats (eeewww figure that
+;; out), boxed types whose storage is ALWAYS headerless, etc, etc, etc
 
 
 
-;; Cons Cell
-;; It consists of two adjacent 8 byte quantities aligned on 16 byte boundary
+;; ;;;;
+;; Explicit examples of value type
+;; ;;;;
+
+;; Fixnum: Tag #b0
+;; To convert a fixnum to a hardware integer, shift right 1 bit.
+;; To convert a hardware integer to a fixnum, shift left 1 bit.
+;; If it overflows during theshift, convert to bignum
+
+;; Cons Cell: Tag #b0001
+;; It consists of two adjacent 8 byte quantities whose car is
+;; aligned on 16 byte boundary
 ;; Example cons cell in memory:
 ;;  address of a car: 0x0011223344556670
 ;;  address of a cdr: 0x0011223344556678
-;; Tag: 0x0001
 ;; Tagged ptr to above cell: 0x0011223344556671
 ;;
 ;; So, if %eax holds 0x0011223344556671, then
