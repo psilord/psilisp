@@ -1,0 +1,21 @@
+;; -*- mode: Lisp; -*-
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Explorations of hardware representations of value types and tagged
+;; pointer types.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+;; Cons Cell
+;; It consists of two adjacent 8 byte quantities aligned on 16 byte boundary
+;; Example cons cell in memory:
+;;  address of a car: 0x0011223344556670
+;;  address of a cdr: 0x0011223344556678
+;; Tag: 0x0001
+;; Tagged ptr to above cell: 0x0011223344556671
+;;
+;; So, if %eax holds 0x0011223344556671, then
+;; movq -1(%eax), %ebx ; moves the car into the %ebx register,
+;; movq  7(%eax), %edx ; moves the cdr into the %edx register
