@@ -13,7 +13,7 @@
 ;; Fixnum:          | 63-bit fixnum  | XXX0
 ;; Cons Cell        | 60-bit address | 0001
 ;; Closure:         | 60-bit address | 0011
-;; UNUSED:          | <whatever>     | 0101 TODO: good use for this?
+;; UNUSED:          | 60-bit address | 0101 TODO: Broken Heart
 ;; Symbol:          | 60-bit address | 0111
 ;; Array:           | 60-bit address | 1001 (full of same type immediate)
 ;; TaggedArray:     | 60-bit address | 1011 (full of tagged pointers only)
@@ -25,25 +25,25 @@
 ;; Other immediates
 ;; ;;;;
 
-;; ASCII char:      | 16 x 0 | 8-bit char | 0000 | OtherImm Tag TODO: UTF-8
-;; False:           | 24 x 0              | 0010 | OtherImm Tag
-;; True:            | 24 x 0              | 0011 | OtherImm Tag
-;; Empty List:      | 24 x 0              | 0100 | OtherImm Tag
-;; eof:             | 24 x 0              | 0101 | OtherImm Tag
-;; void:            | 24 x 0              | 0110 | OtherImm Tag
-;; unbound:         | 24 x 0              | 0111 | OtherImm Tag
+;; UTF-8 char:    | 24 x 0 | 32-bits UTF-8 | 0000 | OtherImm Tag (left justi.)
+;; False:         | 56 x 0                 | 0010 | OtherImm Tag
+;; True:          | 56 x 0                 | 0011 | OtherImm Tag
+;; Empty List:    | 56 x 0                 | 0100 | OtherImm Tag
+;; eof:           | 56 x 0                 | 0101 | OtherImm Tag
+;; void:          | 56 x 0                 | 0110 | OtherImm Tag
+;; unbound:       | 56 x 0                 | 0111 | OtherImm Tag
 
 ;; ;;;;
 ;; Wide Tags
 ;; ;;;;
 
-;; Executable Code: | 24 x 0 | 0000 | Wide Tag
-;; Stack:           | 24 x 0 | 0001 | Wide Tag
-;; Symbol Table:    | 24 x 0 | 0010 | Wide Tag
-;; Hash Table:      | 24 x 0 | 0011 | Wide Tag
-;; Bignum:          | 24 x 0 | 0100 | Wide Tag
-;; Rational:        | 24 x 0 | 0101 | Wide Tag
-;; Complex:         | 24 x 0 | 0110 | Wide Tag
+;; Executable Code: | 56 x 0 | 0000 | Wide Tag
+;; Stack:           | 56 x 0 | 0001 | Wide Tag
+;; Symbol Table:    | 56 x 0 | 0010 | Wide Tag
+;; Hash Table:      | 56 x 0 | 0011 | Wide Tag
+;; Bignum:          | 56 x 0 | 0100 | Wide Tag
+;; Rational:        | 56 x 0 | 0101 | Wide Tag
+;; Complex:         | 56 x 0 | 0110 | Wide Tag
 ;;
 ;; TODO: Add more, such as, single-floats and double-floats (eeewww figure that
 ;; out), boxed types whose storage is ALWAYS headerless, etc, etc, etc
@@ -56,12 +56,39 @@
 
 ;; Fixnum: Tag #b0
 ;; ===============
+;; We choose this specific tag to make math operations like addition work out
+;; on the tagged representation itself.
 ;;
-;; To convert a fixnum to a hardware integer, shift right 1 bit.
+;; Range: (1- (expt 2 -63)) to (expt 2 63)
+;; (defparameter +word-size* 8) ;; bytes
+;; (defparameter +fx-shift+ 1);; bits
+;; (defun fixnum-bits () (- (* +word-size+ 8) +fx-shift+))
+;; (defun fxlower () (- (expt 2 (- (fixnum-bits) 1))))
+;; (defun fxupper () (1- (expt 2 (- (fixnum-bits) 1))))
+;;
 ;; To convert a hardware integer to a fixnum, shift left 1 bit.
+;; To convert a fixnum to a hardware integer, shift right 1 bit.
 ;; If it overflows during the shift, convert to bignum.
 ;; If a bignum is shifted right and fits into a fixnum, convert to fixnum.
-;; TODO: Tedious exmaple.
+;;
+;; Example odd number, integer -> fixnum:
+;;  Convert: 0x3039
+;;  Arithmetic Shift left 1 bit: 0x6072
+;;  Right most bit is already 0.
+;; Example odd number, fixnum -> integer:
+;;  Convert: 0x6072
+;;  Arithmetic Shift Right 1 bit: 0x3039
+;;  Left most bit is sign extended.
+;;
+;; Example even number, integer -> fixnum:
+;;  Convert: 0x7678
+;;  Arithmetic Shift Left 1 bit: 0xecf0
+;;  Right most bit is already 0.
+;; Example even number, fixnum -> integer:
+;;  Convert: 0xecf0
+;;  Arithmetic Shift Right 1 bit: 0x7678
+;;  Left more bit is sign extended.
+
 
 ;; Cons Cell: Tag #b0001
 ;; =====================
