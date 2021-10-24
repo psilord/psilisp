@@ -56,6 +56,8 @@
 
 ;; Fixnum: Tag #b0
 ;; ===============
+;; This is not a pointer, but an immediate representation of an integer.
+;;
 ;; We choose this specific tag to make math operations like addition work out
 ;; on the tagged representation itself.
 ;;
@@ -88,9 +90,12 @@
 ;;  Convert: 0xecf0
 ;;  Arithmetic Shift Right 1 bit: 0x7678
 ;;  Left more bit is sign extended.
+;;
+;; If the left shift of an integer causes an overflow of a fixnum, the number
+;; must be promoted to a bignum.
 
 
-;; Cons Cell: Tag #b0001
+;; cons Cell: Tag #b0001
 ;; =====================
 ;;
 ;; It consists of two adjacent 8 byte quantities whose car is
