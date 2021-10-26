@@ -3,8 +3,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Explorations of hardware representations of value types and tagged
 ;; pointer types. Derived initially from C0 compiler, but modified heavily
-;; for the C1 compiler.
+;; for the C1 compiler. This is initially for a 64-bit architecture.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; An aligned 8-byte contiguous hardware value is a called a "cell".
+
+;; TODO: Explicitly look to see if 16 or 8 byte alignment is needed when using
+;; this tagging system.
 
 ;; ;;;;
 ;; Narrow Tags (64-bit architecture)
@@ -54,6 +59,7 @@
 ;; Explicit examples of value type
 ;; ;;;;
 
+
 ;; Fixnum: Tag #b0
 ;; ===============
 ;; This is not a pointer, but an immediate representation of an integer.
@@ -93,13 +99,23 @@
 ;;
 ;; If the left shift of an integer causes an overflow of a fixnum, the number
 ;; must be promoted to a bignum.
+;;
+;; Addition and subtraction can be done directly in the tagged representation.
+;;
+;; Multiplication of A * B (both fixnums) are done like this to maximize
+;; available representation range: C = A / 2 * B
+;; as opposed to this: C = (A * B) / 2
+;;
+;; Division cancels the shift factor, so shift back into fixnum when completed.
+;;
+;; Shifts, & other logical bit operations have to be carefully done to not
+;; destroy the tag value (NOT comes to mind).
 
 
-;; cons Cell: Tag #b0001
+;; cons cell: Tag #b0001
 ;; =====================
 ;;
-;; It consists of two adjacent 8 byte quantities whose car is
-;; aligned on 16 byte boundary
+;; It consists of two adjacent cells whose car is aligned on 16 byte boundary.
 ;; Example cons cell in memory:
 ;;  address of a car: 0x0011223344556670
 ;;  address of a cdr: 0x0011223344556678
@@ -108,3 +124,43 @@
 ;; So, if %eax holds 0x0011223344556671, then
 ;; movq -1(%eax), %ebx ; moves the car into the %ebx register,
 ;; movq  7(%eax), %edx ; moves the cdr into the %edx register
+
+
+;; closure: Tag #b0011
+;; ===================
+;;
+;; A closure is a function pointer and a set of associations between closed
+;; environment variables and values that get used when the closure is passed to
+;; the function it was created to serve. Mutable variables must get their own
+;; memory cell to hold the value and multiple closures may reference this
+;; single cell. Closures can be as simple as associating an index value
+;; (representing a closed lexical variable) with a memory cell holding that
+;; value.  They can be as complex as modeling OOP behavior. There are an
+;; infinite number of was to represent a closure, and some are better than
+;; others.
+;;
+;; While it is customary in pedagocial literature to represent the environment
+;; as the same vector type as a vector, we won't do that here. We build a
+;; specific protocol to access the closure and the layout of the closure is
+;; initially very simple. In this model, the storage of the environment looks
+;; like a vector, but it doesn't have to be.
+;;
+;; In our closure model, we associate an index with a lexical variable's value.
+;; We use that index like an array lookup to get the memory cell we've stored
+;; the value in.
+;;
+;; TODO: The start of a closure must be aligned on a 16 byte boundary.
+;; Example of a closure in memory:
+;;  address of pointer to executable code: 0x0011223344556670
+;;  address of zeroth closed value:        0x0011223344556678
+;;  address of first closed value:         0x0011223344556680
+;;  address of Nth closed value:           0x0011223344556670 + 8 + (N * 8)
+;; Tagged pointer to closure: 0x0011223344556673
+;;
+;; So, if %eax holds 0x0011223344556673, then
+;; movq -3(%eax), %ebx ; moves function cell contents into %ebx
+;; leaq  5(%eax), %edx ; computes address of zeroth value in closure into %edx
+;; Then, if index to look up is in %ecx, we:
+;;   base + index*scale + displacement
+;;   movq 5(%eax, %ecx, 8), %edx
+;; which loads the contents of that cell into %edx.
