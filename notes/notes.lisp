@@ -69,3 +69,22 @@
        (:name
 	;; hrm, seems broken.
 	)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; On managed memory and garbage collection
+;;
+;; I am starting to be firmly convinced, unless evidence or math points me
+;; in another direction that the type system and garbage collector have to
+;; know about each other explicitly.
+;;
+;; For example, only regions of memory that can be pointed to via tagged
+;; pointers are garbage collectable. Memory gotten from 'elsewhere' like
+;; another runtime language's library, or via hardware DMA regions, etc, etc,
+;; are by definition not collectable things.
+;;
+;; Thought: There is a diffrence between a sequence that holds exactly and only
+;; tagged pointers (or tagged immediates) and a sequence that holds ONLY
+;; untagged immediates. You can copy a tagged pointer around and the value
+;; it represets won't move in memory. But in the case of an untagged immadiate,
+;; you can only copy the entire bit pattern (like a structure copy in C).

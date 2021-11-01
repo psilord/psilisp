@@ -163,4 +163,4 @@
 ;; Then, if index to look up is in %ecx, we:
 ;;   base + index*scale + displacement
 ;;   movq 5(%eax, %ecx, 8), %edx
-;; which loads the contents of that cell into %edx.
+;; which loads the contents of cell index located in %ecx into %edx.
