@@ -11,6 +11,9 @@
 ;; TODO: Explicitly look to see if 16 or 8 byte alignment is needed when using
 ;; this tagging system.
 
+;; Narrow tags, other immediates, and narrow  immediates always fit into one
+;; 8 byte block.
+
 ;; ;;;;
 ;; Narrow Tags (64-bit architecture)
 ;; ;;;;
@@ -27,7 +30,7 @@
 ;; Wide tag:        | <whatever>     | 1111
 
 ;; ;;;;
-;; Other immediates
+;; Other immediates (always narrow)
 ;; ;;;;
 
 ;; UTF-8 char:    | 24 x 0 | 32-bits UTF-8 | 0000 | OtherImm Tag (left justi.)
