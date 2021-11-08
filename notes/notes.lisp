@@ -88,3 +88,58 @@
 ;; untagged immediates. You can copy a tagged pointer around and the value
 ;; it represets won't move in memory. But in the case of an untagged immadiate,
 ;; you can only copy the entire bit pattern (like a structure copy in C).
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Closure conversion example
+;;
+;; Determine free variables
+;; mutable cell transform
+;; make closures and close all lambdas
+;; name & lift closed functions to toplevel
+;;
+
+;; original code
+(let ((x 10)
+      (y 20))
+  (list (lambda (v) (+ x y v))
+	(lambda (v) (set! x v))))
+
+;; Pass 1: determine free variables:
+(let ((x 10)
+      (y 20))
+  (list (lambda (v) (+ x y v)) ;; x and y are free
+	(lambda (v) (set! x v)))) ;; x is free
+
+;; Pass 2: mutable cell transform
+(let ((x (make-cell 10))
+      (y 20))
+  (list (lambda (v) (+ (cell-get x) y v))
+	(lambda (v) (cell-set! x v))))
+
+;; Pass 3: make closures and produce closed lambdas
+(let ((x (make-cell 10))
+      (y 20))
+  (list (make-closure :closed-vars (vector x y) ;; variables to close over
+		      :func (clambda (c0 v)
+				     (+ (cell-get (cref c0 0))
+					(cell-get (cref c0 1))
+					v)))
+	(make-closure :closed-vars (vector x) ;; variables to close over
+		      :func (clambda (c1 v)
+				     (cell-set! (cref c1 0) v)))))
+
+;; Pass 4: name and lift clambdas to top level
+
+;; letrec instead of labels for CL indenting...
+(labels ((cf0 (clambda (c0 v)
+	       (+ (cell-get (cref c0 0))
+		(cell-get (cref c0 1))
+		v)))
+	 (cf1 (clambda (c1 v)
+	       (cell-set! (cref c1 0) v))))
+  (let ((x (make-cell 10))
+	(y 20))
+    (list (make-closure :closed-vars (vector x y)
+			:func cf0)
+	  (make-closure :cloesd-vars (vector x)
+			:func cf1))))
