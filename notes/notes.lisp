@@ -122,7 +122,7 @@
   (list (make-closure :closed-vars (vector x y) ;; variables to close over
 		      :func (clambda (c0 v)
 				     (+ (cell-get (cref c0 0))
-					(cell-get (cref c0 1))
+					(cref c0 1)
 					v)))
 	(make-closure :closed-vars (vector x) ;; variables to close over
 		      :func (clambda (c1 v)
