@@ -92,11 +92,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Closure conversion example
 ;;
-;; Determine free variables
 ;; mutable cell transform
+;; determine free variables
 ;; make closures and close all lambdas
 ;; name & lift closed functions to toplevel
 ;;
+;; If things like + are global variables, then not closing over them is good.
 
 ;; original code
 (let ((x 10)
@@ -111,12 +112,14 @@
 	(lambda (v) (cell-set! x v))))
 
 ;; Pass 2: determine free variables:
-(let ((x 10)
+(let ((x (make-cell 10))
       (y 20))
-  (list (lambda (v) (+ x y v)) ;; x and y are free
-	(lambda (v) (set! x v)))) ;; x is free
+  (list (lambda (v) (+ (cell-get x) y v)) ;; x and y are free
+	(lambda (v) (cell-set! x v)))) ;; x is free
 
 ;; Pass 3: make closures and produce closed lambdas
+;; The x tagged pointer value is copied into two different closures, but both
+;; copies of the tagged pointers point to the _same_ tagged array.
 (let ((x (make-cell 10)) ;; tagged pointer to unique TA x copied into closures
       (y 20)) ;; immediate value y is copied into closures.
   (list (make-closure :closed-vars (vector x y) ;; variables to close over
