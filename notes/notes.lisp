@@ -92,7 +92,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Closure conversion example
 ;;
-;; mutable cell transform
+;; mutable cell transform (transform assignment to mutation)
 ;; determine free variables
 ;; make closures and close all lambdas
 ;; name & lift closed functions to toplevel
@@ -106,6 +106,9 @@
 	(lambda (v) (set! x v))))
 
 ;; Pass 1: mutable cell transform
+;; This will make anything that is only a variable into a place. So, for things
+;; like (set! (aref some-array index) value), that is already a place and
+;; doesn't need to be converted to a specific cell.
 (let ((x (make-cell 10))
       (y 20))
   (list (lambda (v) (+ (cell-get x) y v))
@@ -117,7 +120,7 @@
   (list (lambda (v) (+ (cell-get x) y v)) ;; x and y are free
 	(lambda (v) (cell-set! x v)))) ;; x is free
 
-;; Pass 3: make closures and produce closed lambdas
+;; Pass 3: make (flat) closures and produce closed lambdas
 ;; The x tagged pointer value is copied into two different closures, but both
 ;; copies of the tagged pointers point to the _same_ tagged array.
 (let ((x (make-cell 10)) ;; tagged pointer to unique TA x copied into closures
