@@ -104,21 +104,21 @@
   (list (lambda (v) (+ x y v))
 	(lambda (v) (set! x v))))
 
-;; Pass 1: determine free variables:
-(let ((x 10)
-      (y 20))
-  (list (lambda (v) (+ x y v)) ;; x and y are free
-	(lambda (v) (set! x v)))) ;; x is free
-
-;; Pass 2: mutable cell transform
+;; Pass 1: mutable cell transform
 (let ((x (make-cell 10))
       (y 20))
   (list (lambda (v) (+ (cell-get x) y v))
 	(lambda (v) (cell-set! x v))))
 
-;; Pass 3: make closures and produce closed lambdas
-(let ((x (make-cell 10))
+;; Pass 2: determine free variables:
+(let ((x 10)
       (y 20))
+  (list (lambda (v) (+ x y v)) ;; x and y are free
+	(lambda (v) (set! x v)))) ;; x is free
+
+;; Pass 3: make closures and produce closed lambdas
+(let ((x (make-cell 10)) ;; tagged pointer to unique TA x copied into closures
+      (y 20)) ;; immediate value y is copied into closures.
   (list (make-closure :closed-vars (vector x y) ;; variables to close over
 		      :func (clambda (c0 v)
 				     (+ (cell-get (cref c0 0))
