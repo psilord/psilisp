@@ -75,6 +75,9 @@
 ;; <application> ::= (<expr> <exprs>)
 ;; <quote> ::= (quote <expr>)
 
+;; The second form of the language is the above, but <lambda> has been
+;; augmented with <closure> (and maybe <clambda> for the closed functions).
+
 ;; -----------------------------------------------------------------------
 ;; Some convenient machinery to deal with defclass types.
 ;; -----------------------------------------------------------------------
@@ -135,15 +138,15 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
 
 (flexible-constructor syment)
 
-(defun make-syment/global ()
+(defun make-syment/global (&key (bound-p nil))
   (make-syment :global-p t :mutable-p t
                :mutated-p nil :syntax-p nil
-               :prim-p nil))
+               :prim-p nil :bound-p bound-p))
 
-(defun make-syment/local ()
+(defun make-syment/local (&key (bound-p nil))
   (make-syment :global-p nil :mutable-p t
                :mutated-p nil :syntax-p nil
-               :prim-p nil))
+               :prim-p nil :bound-p bound-p))
 
 (defun make-syment/syntax ()
   (make-syment :global-p t :mutable-p nil
@@ -200,6 +203,13 @@ and default it to :any"
 
 (defclass seq () ;; mixin for sequences like vardecls, etc.
   ((%more :accessor more :initarg :more)))
+
+(defclass free-vars () ;; mixin to represent free variables
+  ;; a list of free vars (currently a simple list of symbols)
+  ;; TODO: Spruce this up to be more formal in the AST.
+  ((%free-vars :accessor free-vars :initarg :free-vars :initform nil)))
+
+;; The AST representation.
 
 (defclass ast () ())
 
@@ -276,12 +286,12 @@ and default it to :any"
    (%value :accessor value :initarg :value :type expr)))
 (simple-constructor define-syntax vardecl value)
 
-(defclass lambda-syntax (syntax)
+(defclass lambda-syntax (syntax free-vars)
   ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
    (%body :accessor body :initarg :body :type body)))
 (simple-constructor lambda-syntax vardecls body)
 
-(defclass let-syntax (syntax)
+(defclass let-syntax (syntax free-vars)
   ((%bindings :accessor bindings :initarg :bindings :type let-bindings)
    (%body :accessor body :initarg :body :type body)))
 (simple-constructor let-syntax bindings body)
@@ -296,7 +306,7 @@ and default it to :any"
    (%value :accessor value :initarg :value :type expr)))
 (simple-constructor let-binding vardecl value)
 
-(defclass letrec-syntax (syntax)
+(defclass letrec-syntax (syntax free-vars)
   ((%bindings :accessor bindings :initarg :bindings :type letrec-bindings)
    (%body :accessor body :initarg :body :type body)))
 (simple-constructor letrec-syntax bindings body)
@@ -330,6 +340,26 @@ and default it to :any"
   ((%op :accessor op :initarg :op :type expr)
    (%args :accessor args :initarg :args :type exprs)))
 (simple-constructor application op args)
+
+;;---- closure conversion augmentation of the above IR
+
+;; TODO: This stuff is not at all done yet.
+
+;; A closed lambda function only. No free variables. A new argument of the
+;; closure itself is prefixed as the first argument. All free variable
+;; references have been rewritten into an access into the passed in closure.
+(defclass clambda (expr)
+  ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
+   (%body :accessor body :initarg :body :type body)))
+(simple-constructor clambda vardecls body)
+
+(defclass closure (expr)
+  ((%closed-func :accessor closed-func :initarg :close-func :type clambda)
+   (%closed-vars :accessor closed-vars :initarg :closed-vars))) ;; TODO :type
+(simple-constructor closure closed-func closed-vars)
+
+
+
 
 ;; -----------------------------------------------------------------------
 ;; Utils
@@ -619,7 +649,7 @@ item and defaults to IDENTITY."
   (unparse style (1+ indent) (value self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self lambda-syntax))
-  (logiti indent "; ~A~%" self)
+  (logiti indent "; ~A | FV: ~A~%" self (free-vars self))
   (unparse style (+ indent 2) (vardecls self))
   (unparse style (1+ indent) (body self)))
 
@@ -635,7 +665,7 @@ item and defaults to IDENTITY."
     (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :ast)) indent (self let-syntax))
-  (logiti indent "; ~A~%" self)
+  (logiti indent "; ~A | FV: ~A~%" self (free-vars self))
   (unparse style (+ indent 2) (bindings self))
   (unparse style (1+ indent) (body self)))
 
@@ -651,7 +681,7 @@ item and defaults to IDENTITY."
     (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :ast)) indent (self letrec-syntax))
-  (logiti indent "; ~A~%" self)
+  (logiti indent "; ~A | FV: ~A~%" self (free-vars self))
   (unparse style (+ indent 2) (bindings self))
   (unparse style (1+ indent) (body self)))
 
@@ -750,7 +780,9 @@ item and defaults to IDENTITY."
 (defun define-expr (expr)
   (third expr))
 
-(defun var-p (expr)  ;; TODO: Carefully consider semantics.
+;; TODO: Carefully consider semantics. This means that symbols are bleeding
+;; from the host language of CL into psilisp.
+(defun var-p (expr)
   (symbolp expr))
 
 (defun lambda-p (env expr)
@@ -910,8 +942,7 @@ item and defaults to IDENTITY."
                       ;; pass
                       (error "lambda formal ~A defined more than once." id))
 
-                    (let ((syment (make-syment/local)))
-                      (setf (bound-p syment) t)
+                    (let ((syment (make-syment/local :bound-p t)))
                       (env:add-definition env :var id syment)
                       (setf (syment var) syment)))))
 
@@ -952,8 +983,7 @@ item and defaults to IDENTITY."
                     ;; pass
                     (error "LET: ~A defined more than once." id))
 
-                  (let ((syment (make-syment/local)))
-                    (setf (bound-p syment) t)
+                  (let ((syment (make-syment/local :bound-p t)))
                     (env:add-definition env :var id syment)
                     (setf (syment var) syment)))))
 
@@ -983,9 +1013,8 @@ item and defaults to IDENTITY."
     ;; First, we find and insert all declaring variables into the symbol table.
     (env:open-scope env :var)
     (loop :for var :in binding-vars
-          :for syment = (make-syment/local)
-          :do (setf (bound-p syment) t ;; TODO: seems wrong.
-                    (mutated-p syment) t) ;; have to mutate binding!
+          :for syment = (make-syment/local :bound-p t) ;; bound-p seems wrong.
+          :do (setf (mutated-p syment) t) ;; have to mutate binding!
               ;; TODO: observe multiple definition error.
               (env:add-definition env :var var syment))
 
@@ -1013,6 +1042,10 @@ item and defaults to IDENTITY."
         (value (pass/src->ast%expr env (set!-expr expr))))
 
     ;; poke in a global variable if nothing in local scope.
+    ;; TODO: We need to tell the user the best thing if we're going to
+    ;; create a global variable or not automatically. Maybe it was a typo?
+    ;; Maybe it was intentional? Figure out the best thing to state to the
+    ;; user, if anything.
     (let* ((syment (env:find-definition env :var (id var) :scope :any))
            (syment (if syment syment (make-syment/global))))
 
@@ -1064,14 +1097,15 @@ item and defaults to IDENTITY."
     ;; Variable reference...
     ((var-p expr)
      (let ((v (pass/src->ast%var env expr)))
-       ;; TODO: We should insert "uninitialized" var references for vardecls
-       ;; into the symbol table, and if we find one we should do slightly
-       ;; different behavior here as opposed to when we find NO symbol in the
-       ;; scope.
        (let ((syment (env:find-definition env :var (id v) :scope :any)))
          (unless syment
            (loglvl :error
-                   "ERROR: Variable reference ~A is undefined.~%" (id v)))
+                   "ERROR: Variable reference ~A is undefined.~%" (id v))
+           ;; NOTE: We add a new unbound definition in response to the
+           ;; unknown variable to which we refer.
+           (let ((unbound-syment (make-syment/local)))
+             (env:add-definition env :var (id v) unbound-syment)
+             (setf syment unbound-syment)))
 
          ;; Now finally bind the variable to the symbol table entry.
          (setf (syment v) syment)
@@ -1134,6 +1168,116 @@ item and defaults to IDENTITY."
   (pass/src->ast%toplevel env exprs))
 
 ;; -----------------------------------------------------------------------
+;; Pass: Perform a free variable analysis on the AST and record free variables
+;; into the nodes of: LAMBDA-SYNTAX, LET-SYNTAX, LETREC-SYNTAX
+;; -----------------------------------------------------------------------
+
+;; TODO: Complete me.
+
+(defun collect-free-variables (&rest forms)
+  (reduce #'union (mapcar #'pass/free-variables forms)))
+
+(defgeneric pass/free-variables (node))
+
+(defmethod pass/free-variables ((self (eql nil)))
+  nil)
+
+(defmethod pass/free-variables ((self toplevel))
+  (pass/free-variables (body self)))
+
+(defmethod pass/free-variables ((self body))
+  (collect-free-variables (defs self) (exprs self)))
+
+(defmethod pass/free-variables ((self exprs))
+  (let ((free-vars nil))
+    (seq-iter self
+              (lambda (s)
+                (setf free-vars
+                      (union free-vars (pass/free-variables (expr s))))))
+    free-vars))
+
+(defmethod pass/free-variables ((self literal))
+  nil)
+
+(defmethod pass/free-variables ((self var))
+  (let ((sym (syment self)))
+    (unless (or (prim-p sym) (global-p sym))
+      ;; TODO: What should I return here? The var name or the symbol entry?
+      ;; Or a cons of the two? How do I use this information? I think I need
+      ;; the varname itself, so I can env:find-definition scope :any in the
+      ;; right node to close over.
+      (list (id self)))))
+
+(defmethod pass/free-variables ((self prim))
+  (pass/free-variables (op self)))
+
+(defmethod pass/free-variables ((self prim-unary))
+  (collect-free-variables (op self) (arg0 self)))
+
+(defmethod pass/free-variables ((self prim-binary))
+  (collect-free-variables (op self) (arg0 self) (arg1 self)))
+
+(defmethod pass/free-variables ((self set!-syntax))
+  (collect-free-variables (var self) (value self)))
+
+(defmethod pass/free-variables ((self if-syntax))
+  (collect-free-variables (choice self) (consequent self) (alternate self)))
+
+(defmethod pass/free-variables ((self begin-syntax))
+  (pass/free-variables (body self)))
+
+(defmethod pass/free-variables ((self application))
+  (collect-free-variables (op self) (args self)))
+
+(defmethod pass/free-variables ((self vardecl))
+  (pass/free-variables (var self)))
+
+(defmethod pass/free-variables ((self lambda-syntax))
+  (let ((formal-vars nil))
+    (seq-iter (vardecls self)
+              (lambda (vardecls)
+                (setf formal-vars
+                      (union formal-vars
+                             (pass/free-variables (vardecl vardecls))))))
+
+    (let ((result (set-difference (pass/free-variables (body self))
+                                  formal-vars)))
+      ;; At this form, we store the viewpoint of free variables.
+      (setf (free-vars self) (copy-seq result))
+      result)))
+
+(defmethod pass/free-variables ((self let-syntax))
+  (let ((let-vars nil)
+        (free-in-bindings-vars nil))
+    (seq-iter (bindings self)
+              (lambda (bindings)
+                (let* ((binding (binding bindings))
+                       (vardecl (vardecl binding))
+                       (value (value binding)))
+                  ;; store the var decl we're gonna need
+                  (setf let-vars
+                        (union let-vars
+                               (pass/free-variables vardecl)))
+                  ;; collect the free-vars for this binding value
+                  (setf free-in-bindings-vars
+                        (union free-in-bindings-vars
+                               (pass/free-variables value))))))
+    (let ((result
+            (union
+             ;; Here, we remove the variables that our bindings all supplied.
+             (set-difference (pass/free-variables (body self))
+                             let-vars)
+             free-in-bindings-vars)))
+      (setf (free-vars self) (copy-seq result))
+      result)))
+
+(defmethod pass/free-variables ((self letrec-syntax))
+  nil)
+
+
+;; TODO: Continue defining the pass/free-variables methods for all node types.
+
+;; -----------------------------------------------------------------------
 ;; Test compilation of a single toplevel set of forms.
 ;; -----------------------------------------------------------------------
 
@@ -1165,6 +1309,9 @@ item and defaults to IDENTITY."
   (let ((env (init-global-environment))) ;; a global scope is left open....
 
     (let* ((ast (pass/src->ast env top-forms)))
+
+      ;; side effect passes...
+      (pass/free-variables ast)
 
       (unparse unparse-style 0 ast)
 

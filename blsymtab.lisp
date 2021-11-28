@@ -15,13 +15,14 @@
   (apply #'make-instance 'blsymtab init-args))
 
 (defun open-scope (bst)
-  "Add a new innermost frame to the environment."
+  "Add a new innermost frame to the environment. Return the new scope."
   (let* ((curr-inner (first (frames bst)))
          (new-inner (st:make-symtab :scope-id
                                     (if curr-inner
                                         (1+ (st:scope-id curr-inner))
                                         0))))
-    (push new-inner (frames bst))))
+    (push new-inner (frames bst))
+    new-inner))
 
 (defun close-scope (bst)
   "Remove the innermost frame from the environment."
