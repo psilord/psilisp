@@ -128,7 +128,14 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
   #++(call-next-method)
   (print-unreadable-object (obj str :type nil :identity t)
     (format str
-            "SYM g~:[F~;T~]m~:[F~;T~]mu~:[F~;T~]s~:[F~;T~]p~:[F~;T~]b~:[F~;T~]"
+            ;; Legend:
+            ;; g/G - not global / global
+            ;; m/M - not mutable / mutable
+            ;; u/U - not mutated / mutated
+            ;; p/P - not primitive / primitive
+            ;; s/S - not syntax / syntax
+            ;; b/B - not bound / bound
+            "SYM ~:[g~;G~]~:[m~;M~]~:[u~;U~]~:[s~;S~]~:[p~;P~]~:[b~;B~]"
             (global-p obj)
             (mutable-p obj)
             (mutated-p obj)
