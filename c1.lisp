@@ -649,7 +649,8 @@ item and defaults to IDENTITY."
   (unparse style (1+ indent) (value self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self lambda-syntax))
-  (logiti indent "; ~A | FV: ~A~%" self (free-vars self))
+  (logiti indent "; ~A~%" self)
+  (logiti indent "; FV: ~A~%" (free-vars self))
   (unparse style (+ indent 2) (vardecls self))
   (unparse style (1+ indent) (body self)))
 
@@ -665,7 +666,8 @@ item and defaults to IDENTITY."
     (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :ast)) indent (self let-syntax))
-  (logiti indent "; ~A | FV: ~A~%" self (free-vars self))
+  (logiti indent "; ~A~%" self)
+  (logiti indent "; FV: ~A~%" (free-vars self))
   (unparse style (+ indent 2) (bindings self))
   (unparse style (1+ indent) (body self)))
 
@@ -681,7 +683,8 @@ item and defaults to IDENTITY."
     (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :ast)) indent (self letrec-syntax))
-  (logiti indent "; ~A | FV: ~A~%" self (free-vars self))
+  (logiti indent "; ~A~%" self)
+  (logiti indent "; FV: ~A~%" (free-vars self))
   (unparse style (+ indent 2) (bindings self))
   (unparse style (1+ indent) (body self)))
 
@@ -1172,10 +1175,20 @@ item and defaults to IDENTITY."
 ;; into the nodes of: LAMBDA-SYNTAX, LET-SYNTAX, LETREC-SYNTAX
 ;; -----------------------------------------------------------------------
 
-;; TODO: Complete me.
+;; TODO: Put these utilities somewhere.
+(defun fv-union (l1 l2)
+  (union l1 l2 :test #'equal))
+
+(defun fv-set-difference (l1 l2)
+  (set-difference l1 l2 :test #'equal))
+
+(defun fv-intersection (l1 l2)
+  (intersection l1 l2 :test #'equal))
+
 
 (defun collect-free-variables (&rest forms)
-  (reduce #'union (mapcar #'pass/free-variables forms)))
+  (when forms
+    (reduce #'fv-union (mapcar #'pass/free-variables forms))))
 
 (defgeneric pass/free-variables (node))
 
@@ -1202,11 +1215,10 @@ item and defaults to IDENTITY."
 (defmethod pass/free-variables ((self var))
   (let ((sym (syment self)))
     (unless (or (prim-p sym) (global-p sym))
-      ;; TODO: What should I return here? The var name or the symbol entry?
-      ;; Or a cons of the two? How do I use this information? I think I need
-      ;; the varname itself, so I can env:find-definition scope :any in the
-      ;; right node to close over.
-      (list (id self)))))
+      ;; TODO: Since I'm not sure entirely what to return here yet (which will
+      ;; be figured out during closure conversion), return a cons of the
+      ;; varname and the syment for it. That should be plenty useful for now.
+      (list (cons (id self) sym)))))
 
 (defmethod pass/free-variables ((self prim))
   (pass/free-variables (op self)))
@@ -1237,11 +1249,11 @@ item and defaults to IDENTITY."
     (seq-iter (vardecls self)
               (lambda (vardecls)
                 (setf formal-vars
-                      (union formal-vars
-                             (pass/free-variables (vardecl vardecls))))))
+                      (fv-union formal-vars
+                                (pass/free-variables (vardecl vardecls))))))
 
-    (let ((result (set-difference (pass/free-variables (body self))
-                                  formal-vars)))
+    (let ((result (fv-set-difference (pass/free-variables (body self))
+                                     formal-vars)))
       ;; At this form, we store the viewpoint of free variables.
       (setf (free-vars self) (copy-seq result))
       result)))
@@ -1256,26 +1268,48 @@ item and defaults to IDENTITY."
                        (value (value binding)))
                   ;; store the var decl we're gonna need
                   (setf let-vars
-                        (union let-vars
-                               (pass/free-variables vardecl)))
+                        (fv-union let-vars
+                                  (pass/free-variables vardecl)))
                   ;; collect the free-vars for this binding value
                   (setf free-in-bindings-vars
-                        (union free-in-bindings-vars
-                               (pass/free-variables value))))))
+                        (fv-union free-in-bindings-vars
+                                  (pass/free-variables value))))))
     (let ((result
-            (union
+            (fv-union
              ;; Here, we remove the variables that our bindings all supplied.
-             (set-difference (pass/free-variables (body self))
-                             let-vars)
+             (fv-set-difference (pass/free-variables (body self))
+                                let-vars)
              free-in-bindings-vars)))
       (setf (free-vars self) (copy-seq result))
       result)))
 
 (defmethod pass/free-variables ((self letrec-syntax))
-  nil)
-
-
-;; TODO: Continue defining the pass/free-variables methods for all node types.
+  ;; Gather all vardecls first, since we're going to assume all of
+  ;; them are bound before processing the binding forms and the body.
+  (let ((letrec-vars nil)
+        (free-in-bindings-vars nil))
+    (seq-iter (bindings self)
+              (lambda (bindings)
+                (let* ((binding (binding bindings))
+                       (vardecl (vardecl binding))
+                       (value (value binding)))
+                  ;; gather the vardecls symbols
+                  (setf letrec-vars
+                        (fv-union letrec-vars
+                                  (pass/free-variables vardecl)))
+                  ;; gather all free vars in binding values.
+                  (setf free-in-bindings-vars
+                        (fv-union free-in-bindings-vars
+                                  (pass/free-variables value))))))
+    (let ((result
+            (fv-set-difference
+             ;; union the bindings free vars and the body free vars...
+             (fv-union free-in-bindings-vars
+                       (pass/free-variables (body self)))
+             ;; then remove the letrec-vars to leave the free vars left.
+             letrec-vars)))
+      (setf (free-vars self) (copy-seq result))
+      result)))
 
 ;; -----------------------------------------------------------------------
 ;; Test compilation of a single toplevel set of forms.
