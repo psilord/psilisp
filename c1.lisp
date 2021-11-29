@@ -1229,6 +1229,9 @@ item and defaults to IDENTITY."
 (defmethod pass/free-variables ((self prim-binary))
   (collect-free-variables (op self) (arg0 self) (arg1 self)))
 
+(defmethod pass/free-variables ((self define-syntax))
+  (error "pass/free-variables for define-syntax is not yet implemented."))
+
 (defmethod pass/free-variables ((self set!-syntax))
   (collect-free-variables (var self) (value self)))
 
