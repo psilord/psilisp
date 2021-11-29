@@ -205,7 +205,8 @@ and default it to :any"
   ((%more :accessor more :initarg :more)))
 
 (defclass free-vars () ;; mixin to represent free variables
-  ;; a list of free vars (currently a simple list of symbols)
+  ;; a list of free vars (currently a simple list of conses of symbol names
+  ;; and syment entries).
   ;; TODO: Spruce this up to be more formal in the AST.
   ((%free-vars :accessor free-vars :initarg :free-vars :initform nil)))
 
