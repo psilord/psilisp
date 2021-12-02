@@ -874,39 +874,39 @@ item and defaults to IDENTITY."
 ;; -----------------------------------------------------------------------
 
 ;; literals
-(defun pass/src->ast%literal-fixnum (env expr)
+(defun pass/alphatization%literal-fixnum (env expr)
   (declare (ignore env))
   (make-literal-fixnum expr))
 
-(defun pass/src->ast%literal-char (env expr)
+(defun pass/alphatization%literal-char (env expr)
   (declare (ignore env))
   (make-literal-char expr))
 
-(defun pass/src->ast%literal-bool (env expr)
+(defun pass/alphatization%literal-bool (env expr)
   (declare (ignore env))
   (make-literal-bool expr))
 
-(defun pass/src->ast%literal-null (env expr)
+(defun pass/alphatization%literal-null (env expr)
   (declare (ignore env expr))
   (make-literal-null))
 
-(defun pass/src->ast%var (env expr)
+(defun pass/alphatization%var (env expr)
   (declare (ignore env))
   ;; Note: We let whomever created this var set up and fill in the syment
   ;; associated with it since it knows the context of use, like a decl or a
   ;; rederence.
   (make-var expr nil))
 
-(defun pass/src->ast%vardecl (env expr)
-  (make-vardecl (pass/src->ast%var env expr)))
+(defun pass/alphatization%vardecl (env expr)
+  (make-vardecl (pass/alphatization%var env expr)))
 
-(defun pass/src->ast%vardecls (env expr)
+(defun pass/alphatization%vardecls (env expr)
   (when expr
-    (make-vardecls (pass/src->ast%vardecl env (car expr))
-                   (pass/src->ast%vardecls env (cdr expr)))))
+    (make-vardecls (pass/alphatization%vardecl env (car expr))
+                   (pass/alphatization%vardecls env (cdr expr)))))
 
-(defun pass/src->ast%primitive (env expr)
-  (let ((op-var (pass/src->ast%var env (primitive-op expr)))
+(defun pass/alphatization%primitive (env expr)
+  (let ((op-var (pass/alphatization%var env (primitive-op expr)))
         (len (length (primitive-args expr))))
 
     ;; Known reference to a primitive symbol.
@@ -918,30 +918,30 @@ item and defaults to IDENTITY."
        (make-prim op-var))
       ((= len 1)
        (make-prim-unary op-var
-                        (pass/src->ast%expr env (primitive-arg0 expr))))
+                        (pass/alphatization%expr env (primitive-arg0 expr))))
       ((= len 2)
        (make-prim-binary op-var
-                         (pass/src->ast%expr env (primitive-arg0 expr))
-                         (pass/src->ast%expr env (primitive-arg1 expr))))
+                         (pass/alphatization%expr env (primitive-arg0 expr))
+                         (pass/alphatization%expr env (primitive-arg1 expr))))
       (t
-       (error "pass/src->ast%primitive: Too many args: ~S" expr)))))
+       (error "pass/alphatization%primitive: Too many args: ~S" expr)))))
 
 
 ;; TODO: Not used yet.
-(defun pass/src->ast%define-syntax (env expr)
+(defun pass/alphatization%define-syntax (env expr)
   (let ((var (define-var expr))
         (value-expr (define-expr expr)))
 
-    (make-define-syntax (pass/src->ast%vardecl env var)
-                        (pass/src->ast%expr env value-expr))))
+    (make-define-syntax (pass/alphatization%vardecl env var)
+                        (pass/alphatization%expr env value-expr))))
 
-(defun pass/src->ast%lambda-syntax (env expr)
+(defun pass/alphatization%lambda-syntax (env expr)
   (let ((formals (lambda-formals expr))
         (body (lambda-body expr)))
 
     (env:open-scope env :var)
 
-    (let ((vardecls (pass/src->ast%vardecls env formals))) ;; process formals
+    (let ((vardecls (pass/alphatization%vardecls env formals))) ;; process formals
       ;; put them into the scope.
       (seq-iter vardecls
                 (lambda (vdcls)
@@ -959,28 +959,28 @@ item and defaults to IDENTITY."
 
       ;; process body in the new scope.
       (let ((lambda-node
-              (make-lambda-syntax vardecls (pass/src->ast%body env body))))
+              (make-lambda-syntax vardecls (pass/alphatization%body env body))))
         (env:close-scope env :var)
         lambda-node))))
 
-(defun pass/src->ast%let-binding (env expr)
+(defun pass/alphatization%let-binding (env expr)
   (let ((var-form (let-binding-var expr))
         (value-form (let-binding-value expr)))
-    (make-let-binding (pass/src->ast%vardecl env var-form)
-                      (pass/src->ast%expr env value-form))))
+    (make-let-binding (pass/alphatization%vardecl env var-form)
+                      (pass/alphatization%expr env value-form))))
 
-(defun pass/src->ast%let-bindings (env expr)
+(defun pass/alphatization%let-bindings (env expr)
   (when expr
     (make-let-bindings
-     (pass/src->ast%let-binding env (car expr))
-     (pass/src->ast%let-bindings env (cdr expr)))))
+     (pass/alphatization%let-binding env (car expr))
+     (pass/alphatization%let-bindings env (cdr expr)))))
 
-(defun pass/src->ast%let-syntax (env expr)
+(defun pass/alphatization%let-syntax (env expr)
   (let* ((bindings-form (let-bindings expr))
          (body-form (let-body expr))
          ;; Firt convert the bindings to their AST form,
          ;; ensuring the value expressions are using the current env.
-         (bindings (pass/src->ast%let-bindings env bindings-form)))
+         (bindings (pass/alphatization%let-bindings env bindings-form)))
 
     ;; Now augment the environment for the body with the new variables.
     (env:open-scope env :var)
@@ -1000,23 +1000,23 @@ item and defaults to IDENTITY."
 
     ;; Translate the body with the new vars in scope.
     (let ((let-node (make-let-syntax bindings
-                                     (pass/src->ast%body env body-form))))
+                                     (pass/alphatization%body env body-form))))
       (env:close-scope env :var)
       let-node)))
 
-(defun pass/src->ast%letrec-binding (env expr)
+(defun pass/alphatization%letrec-binding (env expr)
   (let ((var-form (letrec-binding-var expr))
         (value-form (letrec-binding-value expr)))
-    (make-letrec-binding (pass/src->ast%vardecl env var-form)
-                         (pass/src->ast%expr env value-form))))
+    (make-letrec-binding (pass/alphatization%vardecl env var-form)
+                         (pass/alphatization%expr env value-form))))
 
-(defun pass/src->ast%letrec-bindings (env expr)
+(defun pass/alphatization%letrec-bindings (env expr)
   (when expr
     (make-letrec-bindings
-     (pass/src->ast%letrec-binding env (car expr))
-     (pass/src->ast%letrec-bindings env (cdr expr)))))
+     (pass/alphatization%letrec-binding env (car expr))
+     (pass/alphatization%letrec-bindings env (cdr expr)))))
 
-(defun pass/src->ast%letrec-syntax (env expr)
+(defun pass/alphatization%letrec-syntax (env expr)
   (let* ((bindings-form (letrec-bindings expr))
          (binding-vars (letrec-binding-vars bindings-form))
          (body-form (letrec-body expr)))
@@ -1030,7 +1030,7 @@ item and defaults to IDENTITY."
               (env:add-definition env :var var syment))
 
     ;; Then we process the bindings within this new scope.
-    (let ((bindings (pass/src->ast%letrec-bindings env bindings-form)))
+    (let ((bindings (pass/alphatization%letrec-bindings env bindings-form)))
       ;; Now, we must fixup the bindings vardecl to point to the right thing.
       (seq-iter bindings
                 (lambda (bndgs)
@@ -1044,13 +1044,13 @@ item and defaults to IDENTITY."
                ;; Now all binding values are processed in the scope of the
                ;; variables being bound.
                bindings
-               (pass/src->ast%body env body-form))))
+               (pass/alphatization%body env body-form))))
         (env:close-scope env :var)
         letrec-node))))
 
-(defun pass/src->ast%set!-syntax (env expr)
-  (let ((var (pass/src->ast%var env (set!-var expr)))
-        (value (pass/src->ast%expr env (set!-expr expr))))
+(defun pass/alphatization%set!-syntax (env expr)
+  (let ((var (pass/alphatization%var env (set!-var expr)))
+        (value (pass/alphatization%expr env (set!-expr expr))))
 
     ;; poke in a global variable if nothing in local scope.
     ;; TODO: We need to tell the user the best thing if we're going to
@@ -1071,23 +1071,23 @@ item and defaults to IDENTITY."
 
     (make-set!-syntax var value)))
 
-(defun pass/src->ast%if-syntax (env expr)
-  (make-if-syntax (pass/src->ast%expr env (if-condition expr))
-                  (pass/src->ast%expr env (if-conseq expr))
+(defun pass/alphatization%if-syntax (env expr)
+  (make-if-syntax (pass/alphatization%expr env (if-condition expr))
+                  (pass/alphatization%expr env (if-conseq expr))
                   ;; TODO: Figure out good default for no alternate, it has a
                   ;; type inference ramification too, etc, etc.
                   (if (if-altern expr)
-                      (pass/src->ast%expr env (if-altern expr))
+                      (pass/alphatization%expr env (if-altern expr))
                       (make-literal-null))))
 
-(defun pass/src->ast%begin-syntax (env expr)
-  (make-begin-syntax (pass/src->ast%body env (begin-body expr))))
+(defun pass/alphatization%begin-syntax (env expr)
+  (make-begin-syntax (pass/alphatization%body env (begin-body expr))))
 
-(defun pass/src->ast%application (env expr)
-  (make-application (pass/src->ast%expr env (car expr))
-                    (pass/src->ast%exprs env (cdr expr))))
+(defun pass/alphatization%application (env expr)
+  (make-application (pass/alphatization%expr env (car expr))
+                    (pass/alphatization%exprs env (cdr expr))))
 
-(defun pass/src->ast%expr (env expr)
+(defun pass/alphatization%expr (env expr)
   (cond
     ;; All the atomic like things so far.
 
@@ -1096,18 +1096,18 @@ item and defaults to IDENTITY."
     ;; TODO: Enforce/typecheck this rule in LET, LAMBDA, etc
 
     ((null-p expr)
-     (pass/src->ast%literal-null env expr))
+     (pass/alphatization%literal-null env expr))
     ((bool-p expr)
-     (pass/src->ast%literal-bool env expr))
+     (pass/alphatization%literal-bool env expr))
 
     ((fixnum-p expr)
-     (pass/src->ast%literal-fixnum env expr))
+     (pass/alphatization%literal-fixnum env expr))
     ((char-p expr)
-     (pass/src->ast%literal-char env expr))
+     (pass/alphatization%literal-char env expr))
 
     ;; Variable reference...
     ((var-p expr)
-     (let ((v (pass/src->ast%var env expr)))
+     (let ((v (pass/alphatization%var env expr)))
        (let ((syment (env:find-definition env :var (id v) :scope :any)))
          (unless syment
            (loglvl :error
@@ -1127,56 +1127,56 @@ item and defaults to IDENTITY."
      (cond
        ;; syntax parsing
        ((lambda-p env expr)
-        (pass/src->ast%lambda-syntax env expr))
+        (pass/alphatization%lambda-syntax env expr))
        ((define-p env expr)
-        (pass/src->ast%define-syntax env expr))
+        (pass/alphatization%define-syntax env expr))
        ((let-p env expr)
-        (pass/src->ast%let-syntax env expr))
+        (pass/alphatization%let-syntax env expr))
        ((letrec-p env expr)
-        (pass/src->ast%letrec-syntax env expr))
+        (pass/alphatization%letrec-syntax env expr))
        ((set!-p env expr)
-        (pass/src->ast%set!-syntax env expr))
+        (pass/alphatization%set!-syntax env expr))
        ((if-p env expr)
-        (pass/src->ast%if-syntax env expr))
+        (pass/alphatization%if-syntax env expr))
        ((begin-p env expr)
-        (pass/src->ast%begin-syntax env expr))
+        (pass/alphatization%begin-syntax env expr))
 
        ;; primitive parsing
        ((primitive-p env expr)
-        (pass/src->ast%primitive env expr))
+        (pass/alphatization%primitive env expr))
 
        ;; an application is only thing left
        (t
-        (pass/src->ast%application env expr))))
+        (pass/alphatization%application env expr))))
     (t
-     (error "pass/src->ast%expr: Can't parse: ~S" expr))))
+     (error "pass/alphatization%expr: Can't parse: ~S" expr))))
 
-(defun pass/src->ast%exprs (env exprs)
+(defun pass/alphatization%exprs (env exprs)
   (when exprs
-    (make-exprs (pass/src->ast%expr env (car exprs))
-                (pass/src->ast%exprs env (cdr exprs)))))
+    (make-exprs (pass/alphatization%expr env (car exprs))
+                (pass/alphatization%exprs env (cdr exprs)))))
 
 
 ;; TODO: Broken.
-(defun pass/src->ast%defs (env defs)
+(defun pass/alphatization%defs (env defs)
   (when defs
-    (make-defs (pass/src->ast%define-syntax env (car defs))
-               (pass/src->ast%defs env (cdr defs)))))
+    (make-defs (pass/alphatization%define-syntax env (car defs))
+               (pass/alphatization%defs env (cdr defs)))))
 
-(defun pass/src->ast%body (env exprs)
+(defun pass/alphatization%body (env exprs)
   (make-body
    ;; TODO: support DEFINE regions later. It is hard because the defines can
    ;; redefine their own symbolic form and checking for that is hairy
    ;; and I don't want to do it right now.
    nil
-   (pass/src->ast%exprs env exprs)))
+   (pass/alphatization%exprs env exprs)))
 
-(defun pass/src->ast%toplevel (env exprs)
-  (make-toplevel (pass/src->ast%body env exprs)))
+(defun pass/alphatization%toplevel (env exprs)
+  (make-toplevel (pass/alphatization%body env exprs)))
 
 ;; Main entry. Convert one toplevel of an incoming source to AST.
-(defun pass/src->ast (env exprs)
-  (pass/src->ast%toplevel env exprs))
+(defun pass/alphatization (env exprs)
+  (pass/alphatization%toplevel env exprs))
 
 ;; -----------------------------------------------------------------------
 ;; Pass: Perform a free variable analysis on the AST and record free variables
@@ -1353,7 +1353,7 @@ item and defaults to IDENTITY."
 (defun c1 (unparse-style top-forms)
   (let ((env (init-global-environment))) ;; a global scope is left open....
 
-    (let* ((ast (pass/src->ast env top-forms)))
+    (let* ((ast (pass/alphatization env top-forms)))
 
       ;; side effect passes...
       (pass/free-variables ast)
