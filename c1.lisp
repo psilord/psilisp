@@ -376,6 +376,8 @@ and default it to :any"
   ((%body :accessor body :initarg :body :type body)))
 (simple-constructor begin-syntax body)
 
+;; TODO: Add a desugared slot that indicates if it came from a LET or a
+;; LETREC so we can undo it for better unparsing/debugging
 (defclass application (expr)
   ((%op :accessor op :initarg :op :type expr)
    (%args :accessor args :initarg :args :type exprs)))
@@ -1257,6 +1259,156 @@ item and defaults to IDENTITY."
   (pass/alphatization%toplevel env exprs))
 
 ;; -----------------------------------------------------------------------
+;; Perform desugaring of code. I don't have a macro system in place yet
+;; so this stands in place of that for handling early binding forms like:
+;; LET, LETREC -> LAMBDA equivalents
+;;
+;; This makes closure conversion much easier to think about....
+;;
+;; Must I have a desugaring pass like this to make closure
+;; conversion easier to reason about? Normally macros take care of this
+;; but I don't have a macro pass yet. It also impacts debugging and
+;; unparsing to get the original source as found back. I could desugar in
+;; the alphatization phase easily, but doing an ast->ast transform would
+;; make record-keeping/debugging info _possible to keep_ when the
+;; desugaring happened.
+;;
+;; The following is ok since I don't _currently_ have CL-like specials.
+;;
+;; (let ((a A) .. (z Z)) body) ->
+;;  ((lambda (a .. z) body) A .. Z)
+;;
+;; (letrec ((a A) .. (z Z)) body) ->
+;;  ;; naive translation...see paper for a better one
+;;  ((lambda (a .. z) (set! a A) ... (set! z Z) body) nil .. nil)
+;; -----------------------------------------------------------------------
+
+(defgeneric pass/desugar (node))
+
+(defmethod pass/desugar ((self (eql nil)))
+  self)
+
+(defmethod pass/desugar ((self toplevel))
+  (setf (body self) (pass/desugar (body self)))
+  self)
+
+(defmethod pass/desugar ((self body))
+  (setf (defs self) (pass/desugar (defs self)))
+  (setf (exprs self) (pass/desugar (exprs self)))
+  self)
+
+(defmethod pass/desugar ((self defs))
+  (setf (def self) (pass/desugar (def self)))
+  (when (more self)
+    (setf (more self) (pass/desugar (more self))))
+  self)
+
+(defmethod pass/desugar ((self def))
+  self)
+
+(defmethod pass/desugar ((self exprs))
+  (setf (expr self) (pass/desugar (expr self)))
+  (when (more self)
+    (setf (more self) (pass/desugar (more self))))
+  self)
+
+(defmethod pass/desugar ((self vardecls))
+  (setf (vardecl self) (pass/desugar (vardecl self)))
+  (when (more self)
+    (setf (more self) (pass/desugar (more self))))
+  self)
+
+(defmethod pass/desugar ((self vardecl))
+  (setf (var self) (pass/desugar (var self)))
+  self)
+
+(defmethod pass/desugar ((self var))
+  self)
+
+;; all literals are just themselves.
+(defmethod pass/desugar ((self literal))
+  self)
+
+(defmethod pass/desugar ((self prim))
+  (setf (op self) (pass/desugar (op self)))
+  self)
+
+(defmethod pass/desugar ((self prim-unary))
+  (setf (op self) (pass/desugar (op self))
+        (arg0 self) (pass/desugar (arg0 self)))
+  self)
+
+(defmethod pass/desugar ((self prim-binary))
+  (setf (op self) (pass/desugar (op self))
+        (arg0 self) (pass/desugar (arg0 self))
+        (arg1 self) (pass/desugar (arg1 self)))
+  self)
+
+(defmethod pass/desugar ((self define-syntax))
+  (setf (vardecl self) (pass/desugar (vardecl self))
+        (value self) (pass/desugar (value self)))
+  self)
+
+(defmethod pass/desugar ((self lambda-syntax))
+  (setf (vardecls self) (pass/desugar (vardecls self)))
+  (setf (body self) (pass/desugar (body self)))
+  self)
+
+(defmethod pass/desugar ((self let-syntax))
+  ;; Convert the LET form to a LAMBDA form.
+  (let ((lambda-vardecl-list nil)
+        (lambda-argexpr-list nil)
+        (lambda-vardecls nil)
+        (lambda-arg-exprs nil))
+    (seq-iter (bindings self)
+              (lambda (bindings-node)
+                (let ((binding (binding bindings-node)))
+                  (push (vardecl binding) lambda-vardecl-list)
+                  (push (value binding) lambda-argexpr-list))))
+
+    ;; Now convert the two lists (and reverse them) to AST appropriate seq
+    ;; equivalents.
+    (loop :for current-decl :in lambda-vardecl-list
+          :for current-arg :in lambda-argexpr-list
+          :do (setf
+               lambda-vardecls (make-vardecls current-decl lambda-vardecls)
+               lambda-arg-exprs (make-exprs current-arg lambda-arg-exprs)))
+
+    ;; Finally, reconstruct the AST representation of the LET form as a
+    ;; an application of the lambda form to its value arguments.
+    (let ((lambda-node (make-lambda-syntax lambda-vardecls
+                                           (pass/desugar (body self))
+                                           (symtab self))))
+      (setf (free-vars lambda-node) (free-vars self))
+
+      (make-application lambda-node (pass/desugar lambda-arg-exprs)))))
+
+(defmethod pass/desugar ((self letrec-syntax))
+  ;; TODO: this is where we convert the LETREC to a LAMBDA + SET! construct.
+  ;; fields: bindings, body
+  self)
+
+(defmethod pass/desugar ((self set!-syntax))
+  (setf (var self) (pass/desugar (var self))
+        (value self) (pass/desugar (value self)))
+  self)
+
+(defmethod pass/desugar ((self if-syntax))
+  (setf (choice self) (pass/desugar (choice self))
+        (consequent self) (pass/desugar (consequent self))
+        (alternate self) (pass/desugar (alternate self)))
+  self)
+
+(defmethod pass/desugar ((self begin-syntax))
+  (setf (body self) (pass/desugar (body self)))
+  self)
+
+(defmethod pass/desugar ((self application))
+  (setf (op self) (pass/desugar (op self))
+        (args self) (pass/desugar (args self)))
+  self)
+
+;; -----------------------------------------------------------------------
 ;; Pass: Perform a free variable analysis on the AST and record free variables
 ;; into the nodes of: LAMBDA-SYNTAX, LET-SYNTAX, LETREC-SYNTAX
 ;; -----------------------------------------------------------------------
@@ -1285,7 +1437,7 @@ item and defaults to IDENTITY."
   (values self nil))
 
 (defmethod pass/free-variables ((self toplevel))
-  (pass/free-variables (body self)))
+  (values self (nth-value 1 (pass/free-variables (body self)))))
 
 (defmethod pass/free-variables ((self body))
   (values self (collect-free-variables (defs self) (exprs self))))
@@ -1300,7 +1452,7 @@ item and defaults to IDENTITY."
     (values self free-vars)))
 
 (defmethod pass/free-variables ((self literal))
-  self nil)
+  (values self nil))
 
 (defmethod pass/free-variables ((self var))
   (let* ((sym (syment self))
@@ -1313,7 +1465,7 @@ item and defaults to IDENTITY."
     (values self fv)))
 
 (defmethod pass/free-variables ((self prim))
-  (pass/free-variables (op self)))
+  (values self (nth-value 1 (pass/free-variables (op self)))))
 
 (defmethod pass/free-variables ((self prim-unary))
   (values self (collect-free-variables (op self) (arg0 self))))
@@ -1333,13 +1485,13 @@ item and defaults to IDENTITY."
                                        (alternate self))))
 
 (defmethod pass/free-variables ((self begin-syntax))
-  (pass/free-variables (body self)))
+  (values self (nth-value 1 (pass/free-variables (body self)))))
 
 (defmethod pass/free-variables ((self application))
   (values self (collect-free-variables (op self) (args self))))
 
 (defmethod pass/free-variables ((self vardecl))
-  (pass/free-variables (var self)))
+  (values self (nth-value 1 (pass/free-variables (var self)))))
 
 (defmethod pass/free-variables ((self lambda-syntax))
   (let ((formal-vars nil))
@@ -1529,11 +1681,16 @@ item and defaults to IDENTITY."
     ;; Compiler passes.
     (setf
      ast (pass/alphatization env top-forms)
+     ;; TODO: Prolly should push freevar analysis later to a lower-level
+     ;; representation (after desugaring), but doing it here is useful for
+     ;; debugging output & recording given the original source.
      (values ast toplevel-freevars) (pass/free-variables ast)
+     ast (pass/desugar ast)
      ast (pass/closure-conversion :flat ast)
      )
 
     (unparse unparse-style 0 ast)
+
     (logit "Free variables at toplevel: ~A~%" toplevel-freevars)
 
     ast))
