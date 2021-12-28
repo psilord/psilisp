@@ -1271,66 +1271,72 @@ item and defaults to IDENTITY."
 (defun fv-intersection (l1 l2)
   (intersection l1 l2 :test #'equal))
 
-
 (defun collect-free-variables (&rest forms)
   (when forms
-    (reduce #'fv-union (mapcar #'pass/free-variables forms))))
+    (reduce #'fv-union (mapcar (lambda (f)
+                                 (nth-value 1 (pass/free-variables f)))
+                               forms))))
 
 ;; Returns ast node as first value, and free variables at that node as second
 ;; value.
 (defgeneric pass/free-variables (node))
 
 (defmethod pass/free-variables ((self (eql nil)))
-  nil)
+  (values self nil))
 
 (defmethod pass/free-variables ((self toplevel))
   (pass/free-variables (body self)))
 
 (defmethod pass/free-variables ((self body))
-  (collect-free-variables (defs self) (exprs self)))
+  (values self (collect-free-variables (defs self) (exprs self))))
 
 (defmethod pass/free-variables ((self exprs))
   (let ((free-vars nil))
     (seq-iter self
               (lambda (s)
                 (setf free-vars
-                      (union free-vars (pass/free-variables (expr s))))))
-    free-vars))
+                      (union free-vars
+                             (nth-value 1 (pass/free-variables (expr s)))))))
+    (values self free-vars)))
 
 (defmethod pass/free-variables ((self literal))
-  nil)
+  self nil)
 
 (defmethod pass/free-variables ((self var))
-  (let ((sym (syment self)))
-    (unless (or (prim-p sym) (global-p sym))
-      ;; TODO: Since I'm not sure entirely what to return here yet (which will
-      ;; be figured out during closure conversion), return a cons of the
-      ;; varname and the syment for it. That should be plenty useful for now.
-      (list (cons (id self) sym)))))
+  (let* ((sym (syment self))
+         (fv (unless (or (prim-p sym) (global-p sym))
+               ;; TODO: Since I'm not sure entirely what to return here yet
+               ;; (which will be figured out during closure conversion), return
+               ;; a cons of the varname and the syment for it. That should be
+               ;; plenty useful for now.
+               (list (cons (id self) sym)))))
+    (values self fv)))
 
 (defmethod pass/free-variables ((self prim))
   (pass/free-variables (op self)))
 
 (defmethod pass/free-variables ((self prim-unary))
-  (collect-free-variables (op self) (arg0 self)))
+  (values self (collect-free-variables (op self) (arg0 self))))
 
 (defmethod pass/free-variables ((self prim-binary))
-  (collect-free-variables (op self) (arg0 self) (arg1 self)))
+  (values self (collect-free-variables (op self) (arg0 self) (arg1 self))))
 
 (defmethod pass/free-variables ((self define-syntax))
   (error "pass/free-variables for define-syntax is not yet implemented."))
 
 (defmethod pass/free-variables ((self set!-syntax))
-  (collect-free-variables (var self) (value self)))
+  (values self (collect-free-variables (var self) (value self))))
 
 (defmethod pass/free-variables ((self if-syntax))
-  (collect-free-variables (choice self) (consequent self) (alternate self)))
+  (values self (collect-free-variables (choice self)
+                                       (consequent self)
+                                       (alternate self))))
 
 (defmethod pass/free-variables ((self begin-syntax))
   (pass/free-variables (body self)))
 
 (defmethod pass/free-variables ((self application))
-  (collect-free-variables (op self) (args self)))
+  (values self (collect-free-variables (op self) (args self))))
 
 (defmethod pass/free-variables ((self vardecl))
   (pass/free-variables (var self)))
@@ -1341,13 +1347,15 @@ item and defaults to IDENTITY."
               (lambda (vardecls)
                 (setf formal-vars
                       (fv-union formal-vars
-                                (pass/free-variables (vardecl vardecls))))))
+                                (nth-value 1 (pass/free-variables
+                                              (vardecl vardecls)))))))
 
-    (let ((result (fv-set-difference (pass/free-variables (body self))
-                                     formal-vars)))
+    (let ((result (fv-set-difference
+                   (nth-value 1 (pass/free-variables (body self)))
+                   formal-vars)))
       ;; At this form, we store the viewpoint of free variables.
       (setf (free-vars self) (copy-seq result))
-      result)))
+      (values self result))))
 
 (defmethod pass/free-variables ((self let-syntax))
   (let ((let-vars nil)
@@ -1360,19 +1368,19 @@ item and defaults to IDENTITY."
                   ;; store the var decl we're gonna need
                   (setf let-vars
                         (fv-union let-vars
-                                  (pass/free-variables vardecl)))
+                                  (nth-value 1 (pass/free-variables vardecl))))
                   ;; collect the free-vars for this binding value
                   (setf free-in-bindings-vars
                         (fv-union free-in-bindings-vars
-                                  (pass/free-variables value))))))
+                                  (nth-value 1 (pass/free-variables value)))))))
     (let ((result
             (fv-union
              ;; Here, we remove the variables that our bindings all supplied.
-             (fv-set-difference (pass/free-variables (body self))
+             (fv-set-difference (nth-value 1 (pass/free-variables (body self)))
                                 let-vars)
              free-in-bindings-vars)))
       (setf (free-vars self) (copy-seq result))
-      result)))
+      (values self result))))
 
 (defmethod pass/free-variables ((self letrec-syntax))
   ;; Gather all vardecls first, since we're going to assume all of
@@ -1387,20 +1395,21 @@ item and defaults to IDENTITY."
                   ;; gather the vardecls symbols
                   (setf letrec-vars
                         (fv-union letrec-vars
-                                  (pass/free-variables vardecl)))
+                                  (nth-value 1 (pass/free-variables vardecl))))
                   ;; gather all free vars in binding values.
                   (setf free-in-bindings-vars
                         (fv-union free-in-bindings-vars
-                                  (pass/free-variables value))))))
+                                  (nth-value 1 (pass/free-variables
+                                                value)))))))
     (let ((result
             (fv-set-difference
              ;; union the bindings free vars and the body free vars...
              (fv-union free-in-bindings-vars
-                       (pass/free-variables (body self)))
+                       (nth-value 1 (pass/free-variables (body self))))
              ;; then remove the letrec-vars to leave the free vars left.
              letrec-vars)))
       (setf (free-vars self) (copy-seq result))
-      result)))
+      (values self result))))
 
 ;; -----------------------------------------------------------------------
 ;; Perform ONLY :flat closure conversion for now. This is a functional-ish pass
@@ -1514,22 +1523,17 @@ item and defaults to IDENTITY."
 
 (defun c1 (unparse-style top-forms)
   (let ((env (env:make-env :valid-categories `(:var)))
-        (ast nil))
+        (ast nil)
+        (toplevel-freevars nil))
 
     ;; Compiler passes.
-    (setf ast (pass/alphatization env top-forms))
-
-    ;; side effect the free variables into the ast.
-
-    ;; TODO: Debate making this return values of AST and free variables.
-    ;; Cause then I could just put this into the setf to assign it to ast
-    ;; again and it would be convenient. It would complicate the internals of
-    ;; the function though...
-    (pass/free-variables ast)
-
-    (setf ast (pass/closure-conversion :flat ast))
+    (setf
+     ast (pass/alphatization env top-forms)
+     (values ast toplevel-freevars) (pass/free-variables ast)
+     ast (pass/closure-conversion :flat ast)
+     )
 
     (unparse unparse-style 0 ast)
-    (env:close-scope env :var)
+    (logit "Free variables at toplevel: ~A~%" toplevel-freevars)
 
     ast))
