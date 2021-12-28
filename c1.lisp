@@ -230,23 +230,25 @@ and default it to :any"
 (defgeneric seq-iter (seq-obj func))
 (defgeneric unparse (style indent node)) ;; unparse back into psilisp or other
 
-(defclass seq () ;; mixin for sequences like vardecls, etc.
+;; mixin for sequences like vardecls, etc.
+(defclass seq ()
   ((%more :accessor more :initarg :more)))
 
-(defclass free-vars () ;; mixin to represent free variables
+;; mixin to represent free variables
+(defclass free-vars ()
   ;; a list of free vars (currently a simple list of conses of symbol names
   ;; and syment entries).
   ;; TODO: Spruce this up to be more formal in the AST.
   ((%free-vars :accessor free-vars :initarg :free-vars :initform nil)))
 
-;; The AST representation.
-
-(defclass ast () ())
-
-;; mixin for anything that is also a bnding form and causes a symbol table
+;; mixin for anything that is also a binding form and causes a symbol table
 ;; scope to be opened or otherwise needs a binding-form.
 (defclass binding-form ()
   ((%symtab :accessor symtab :initarg :symtab :type st:symtab)))
+
+;; The AST representation.
+
+(defclass ast () ())
 
 (defclass toplevel (ast binding-form)
   ((%body :accessor body :initarg :body :type body)))
@@ -261,6 +263,9 @@ and default it to :any"
   ((%def :accessor def :initarg :def :type def)
    (%more :accessor more :initarg :more :type defs)))
 (simple-constructor defs def more)
+
+;; TODO: Figure this out.
+(defclass def (ast) ())
 
 (defclass exprs (ast seq)
   ((%expr :accessor expr :initarg :expr :type expr)
@@ -315,7 +320,6 @@ and default it to :any"
 (simple-constructor prim-binary op arg0 arg1)
 
 (defclass syntax (expr) ())
-
 
 (defclass define-syntax (syntax)
   ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
@@ -1272,6 +1276,8 @@ item and defaults to IDENTITY."
   (when forms
     (reduce #'fv-union (mapcar #'pass/free-variables forms))))
 
+;; Returns ast node as first value, and free variables at that node as second
+;; value.
 (defgeneric pass/free-variables (node))
 
 (defmethod pass/free-variables ((self (eql nil)))
@@ -1397,8 +1403,8 @@ item and defaults to IDENTITY."
       result)))
 
 ;; -----------------------------------------------------------------------
-;; Perform ONLY :flat closure conversion for now. This is mostly a functional
-;; pass that can rewrite or replace some ast nodes.
+;; Perform ONLY :flat closure conversion for now. This is a functional-ish pass
+;; that can rewrite or replace some ast nodes at the appropriate places.
 ;; -----------------------------------------------------------------------
 
 (defgeneric pass/closure-conversion (style node))
@@ -1406,14 +1412,101 @@ item and defaults to IDENTITY."
 (defmethod pass/closure-conversion (style (self (eql nil)))
   nil)
 
-;; TODO: Just so I can put it into the dataflow...
 (defmethod pass/closure-conversion ((style (eql :flat)) (self toplevel))
   (setf (body self) (pass/closure-conversion style (body self)))
   self)
 
 (defmethod pass/closure-conversion ((style (eql :flat)) (self body))
+  (setf (defs self) (pass/closure-conversion style (defs self)))
+  (setf (exprs self) (pass/closure-conversion style (exprs self)))
   self)
 
+(defmethod pass/closure-conversion ((style (eql :flat)) (self defs))
+  (setf (def self) (pass/closure-conversion style (def self)))
+  (when (more self)
+    (setf (more self) (pass/closure-conversion style (more self))))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self def))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self exprs))
+  (setf (expr self) (pass/closure-conversion style (expr self)))
+  (when (more self)
+    (setf (more self) (pass/closure-conversion style (more self))))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self vardecls))
+  (setf (vardecl self) (pass/closure-conversion style (vardecl self)))
+  (when (more self)
+    (setf (more self) (pass/closure-conversion style (more self))))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self vardecl))
+  ;; TODO: a vardecl can never change during closure conversion?
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self var))
+  self)
+
+;; all literals are just themselves.
+(defmethod pass/closure-conversion ((style (eql :flat)) (self literal))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self prim))
+  (setf (op self) (pass/closure-conversion style (op self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self prim-unary))
+  (setf (op self) (pass/closure-conversion style (op self))
+        (arg0 self) (pass/closure-conversion style (arg0 self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self prim-binary))
+  (setf (op self) (pass/closure-conversion style (op self))
+        (arg0 self) (pass/closure-conversion style (arg0 self))
+        (arg1 self) (pass/closure-conversion style (arg1 self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self define-syntax))
+  (setf (vardecl self) (pass/closure-conversion style (vardecl self))
+        (value self) (pass/closure-conversion style (value self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self lambda-syntax))
+  ;; TODO: this is where we convert this to a closure object instead
+  ;; fields: vardecls, body
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self let-syntax))
+  ;; TODO: this is where we convert this to a closure object instead
+  ;; fields: bindings, body
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self letrec-syntax))
+  ;; TODO: this is where we convert this to a closure object instead
+  ;; fields: bindings, body
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self set!-syntax))
+  (setf (var self) (pass/closure-conversion style (var self))
+        (value self) (pass/closure-conversion style (value self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self if-syntax))
+  (setf (choice self) (pass/closure-conversion style (choice self))
+        (consequent self) (pass/closure-conversion style (consequent self))
+        (alternate self) (pass/closure-conversion style (alternate self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self begin-syntax))
+  (setf (body self) (pass/closure-conversion style (body self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self application))
+  (setf (op self) (pass/closure-conversion style (op self))
+        (args self) (pass/closure-conversion style (args self)))
+  self)
 
 ;; -----------------------------------------------------------------------
 ;; Test compilation of a single toplevel set of forms.
@@ -1427,13 +1520,16 @@ item and defaults to IDENTITY."
     (setf ast (pass/alphatization env top-forms))
 
     ;; side effect the free variables into the ast.
+
     ;; TODO: Debate making this return values of AST and free variables.
+    ;; Cause then I could just put this into the setf to assign it to ast
+    ;; again and it would be convenient. It would complicate the internals of
+    ;; the function though...
     (pass/free-variables ast)
 
     (setf ast (pass/closure-conversion :flat ast))
 
     (unparse unparse-style 0 ast)
-
     (env:close-scope env :var)
 
     ast))
