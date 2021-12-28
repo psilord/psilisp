@@ -7,12 +7,32 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; An aligned 8-byte contiguous hardware value is a called a "cell".
+;; All objects are allocated on 16-byte boundaries because the tagging system
+;; uses 4 bits.
 
-;; TODO: Explicitly look to see if 16 or 8 byte alignment is needed when using
-;; this tagging system.
+;; A tagged pointer is an 8-byte quantity, allocated on 8-byte boundaries that
+;; encode either an immediate fixnum, an immediate literal, or contain a
+;; 16-byte aligned pointer to other kinds of heap objects
 
-;; Narrow tags, other immediates, and narrow  immediates always fit into one
+
+;; NOTE: Hints from 64-bit SBCL (mainly that there are 9 tag choices in 64-bit)
+;;
+;; even-fixnum-lowtag        0000 (this is really the tag (X000)
+;; odd-fixnum-lowtag         1000
+;;
+;; other-immediate-0-lowtag  0001
+;; instance-pointer-lowtag   0011 ; notice #b0011 - #b11 is 0000 (dec 0)
+;; other-immediate-1-lowtag  0101
+;; list-pointer-lowtag       0111
+;; other-immediate-2-lowtag  1001
+;; fun-pointer-lowtag        1011 ; notice #b1011 - #b11 is 1000 (dec 8)
+;; other-immediate-3-lowtag  1101
+;; other-pointer-lowtag      1111
+
+;; Narrow tags, other immediates, and narrow immediates always fit into one
 ;; 8 byte block.
+
+;;; TODO: Redo the below. I don't like it.
 
 ;; ;;;;
 ;; Narrow Tags (64-bit architecture)
@@ -55,6 +75,7 @@
 ;;
 ;; TODO: Add more, such as, single-floats and double-floats (eeewww figure that
 ;; out), boxed types whose storage is ALWAYS headerless, etc, etc, etc
+
 
 
 

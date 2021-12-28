@@ -16,7 +16,7 @@
 		:initarg :categories
 		:initform (make-hash-table :test #'equal))))
 
-(defun make-env (&rest valid-categories)
+(defun make-env (&key valid-categories)
   (make-instance 'env
 		 :defined-categories
 		 (let ((def-cats (make-hash-table :test #'equal)))

@@ -28,6 +28,11 @@
 (defun lookup-symbol (st name)
   (gethash name (syments st)))
 
+;; Maybe I should rename this to UNBIND-SYMBOL?
+(defun remove-symbol (st name)
+  (a:when-let ((sym (lookup-symbol st name)))
+    (remhash name st)))
+
 (defun all-names (st)
   (when st
     (a:hash-table-keys (syments st))))

@@ -75,8 +75,18 @@
 ;; <application> ::= (<expr> <exprs>)
 ;; <quote> ::= (quote <expr>)
 
-;; The second form of the language is the above, but <lambda> has been
-;; augmented with <closure> (and maybe <clambda> for the closed functions).
+;; The second form of the language after closure conversion is the above, but
+;; <lambda> has been replaced with <closure> and <clambda> for the closed
+;; functions that contain no free variables.
+;;
+;; <closed-vars> ::= <var> <closed-vars>
+;;            |
+;; <closure> ::= (closure (<closed-vars>) <clambda>)
+;;
+;; The <vardecls> here contains a new argument to represent the closure and it
+;; is spread through the body as appropriate.
+;; <clambda> ::= (clambda (<vardecls>) <body>)
+;;           | <var>
 
 ;; -----------------------------------------------------------------------
 ;; Some convenient machinery to deal with defclass types.
@@ -115,14 +125,28 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
    (%prim-p :accessor prim-p :initarg :prim-p :initform nil)
    ;; Is this symbol known to be bound to anything?  If not, it is an unbound
    ;; variable reference.
-   ;; TODO: Add this into the flow of the compiler.
    (%bound-p :accessor bound-p :initarg :bound-p :initform nil)
 
-   ;; Stuff below is squishy, when I define/use it, then print it out.
+   ;; Squshy stuff below...
 
-   ;; :stack or :heap
-   (%location :accessor location :initarg :location :initform :heap)
+   ;; Is this syment for a closed variable?
+   (%closed-p :accessor closed-p :initarg :closed-p :initform nil)
+   ;; a reference to the syment which was closed over.
+   (%closed-syment :accessor closed-syment :initarg :closed-syment
+                   :initform nil)
+
+   ;; Does this syment represent a closure record/environment that contains its
+   ;; own symbol table of closure variable syments. The key of the closure
+   ;; symtab  is the variable id, the value is a syment record which ultimately
+   ;; contains a reference to the symtab entry of what it closed over.
+   (%closure-p :accessor closure-p :initarg :closure-p :initform nil)
+   ;; symtab of free var ids to closed syment entries.
+   (%closure-symtab :accessor closure-symtab :initarg :closure-symtab
+                    :initform nil)
+
    ))
+(flexible-constructor syment)
+
 ;; We'll see if I like this for now...
 (defmethod print-object ((obj syment) str)
   #++(call-next-method)
@@ -142,8 +166,6 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
             (syntax-p obj)
             (prim-p obj)
             (bound-p obj))))
-
-(flexible-constructor syment)
 
 (defun make-syment/global (&key (bound-p nil))
   (make-syment :global-p t :mutable-p t
@@ -221,9 +243,14 @@ and default it to :any"
 
 (defclass ast () ())
 
-(defclass toplevel (ast)
+;; mixin for anything that is also a bnding form and causes a symbol table
+;; scope to be opened or otherwise needs a binding-form.
+(defclass binding-form ()
+  ((%symtab :accessor symtab :initarg :symtab :type st:symtab)))
+
+(defclass toplevel (ast binding-form)
   ((%body :accessor body :initarg :body :type body)))
-(simple-constructor toplevel body)
+(simple-constructor toplevel body symtab)
 
 (defclass body (ast)
   ((%defs :accessor defs :initarg :defs :type defs)
@@ -289,20 +316,21 @@ and default it to :any"
 
 (defclass syntax (expr) ())
 
+
 (defclass define-syntax (syntax)
   ((%vardecl :accessor vardecl :initarg :vardecl :type vardecl)
    (%value :accessor value :initarg :value :type expr)))
 (simple-constructor define-syntax vardecl value)
 
-(defclass lambda-syntax (syntax free-vars)
+(defclass lambda-syntax (syntax free-vars binding-form)
   ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor lambda-syntax vardecls body)
+(simple-constructor lambda-syntax vardecls body symtab)
 
-(defclass let-syntax (syntax free-vars)
+(defclass let-syntax (syntax free-vars binding-form)
   ((%bindings :accessor bindings :initarg :bindings :type let-bindings)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor let-syntax bindings body)
+(simple-constructor let-syntax bindings body symtab)
 
 (defclass let-bindings (syntax seq)
   ((%binding :accessor binding :initarg :binding :type let-binding)
@@ -314,10 +342,10 @@ and default it to :any"
    (%value :accessor value :initarg :value :type expr)))
 (simple-constructor let-binding vardecl value)
 
-(defclass letrec-syntax (syntax free-vars)
+(defclass letrec-syntax (syntax free-vars binding-form)
   ((%bindings :accessor bindings :initarg :bindings :type letrec-bindings)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor letrec-syntax bindings body)
+(simple-constructor letrec-syntax bindings body symtab)
 
 (defclass letrec-bindings (syntax seq)
   ((%binding :accessor binding :initarg :binding :type letrec-binding)
@@ -353,21 +381,30 @@ and default it to :any"
 
 ;; TODO: This stuff is not at all done yet.
 
-;; A closed lambda function only. No free variables. A new argument of the
-;; closure itself is prefixed as the first argument. All free variable
-;; references have been rewritten into an access into the passed in closure.
-(defclass clambda (expr)
+;; Variables known to be free that must be closed over.  Specifically, this
+;; means their value (think tagged pointer) has been copied only.
+(defclass closed-vars (ast seq)
+  ((%var :accessor var :initarg :var :type var)
+   (%more :accessor more :initarg :more :type closed-vars)))
+(simple-constructor closed-vars var more)
+
+;; A closed function: no free variables, possibly using a new closure record
+;; formal too. All references to any free variables have been rewritten into
+;; references out of the closure record.
+(defclass clambda (expr binding-form)
   ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
    (%body :accessor body :initarg :body :type body)))
-(simple-constructor clambda vardecls body)
+(simple-constructor clambda vardecls body symtab)
 
-(defclass closure (expr)
-  ((%closed-func :accessor closed-func :initarg :close-func :type clambda)
-   (%closed-vars :accessor closed-vars :initarg :closed-vars))) ;; TODO :type
-(simple-constructor closure closed-func closed-vars)
-
-
-
+(defclass closure (expr binding-form)
+  ((%closed-vars :accessor closed-vars :initarg :closed-vars :type closed-vars)
+   ;; An explicit description of the generated closure variable we're using to
+   ;; represent the closure environment. It will be the only variable in the
+   ;; symtab associated with this closure object (which of course contains a
+   ;; symtab inside of it for each of the slots in the closure).
+   (%cvar :accessor cvar :initarg :cvar :type var)
+   (%clambda :accessor clambda :initarg :clambda :type (or clambda var))))
+(simple-constructor closure closed-vars cvar clambda symtab)
 
 ;; -----------------------------------------------------------------------
 ;; Utils
@@ -937,9 +974,10 @@ item and defaults to IDENTITY."
 
 (defun pass/alphatization%lambda-syntax (env expr)
   (let ((formals (lambda-formals expr))
-        (body (lambda-body expr)))
-
-    (env:open-scope env :var)
+        (body (lambda-body expr))
+        ;; record the symbol table scope we're opening in case we need to
+        ;; explicitly muck with it later.
+        (lambda-symtab (env:open-scope env :var)))
 
     (let ((vardecls (pass/alphatization%vardecls env formals))) ;; process formals
       ;; put them into the scope.
@@ -959,7 +997,9 @@ item and defaults to IDENTITY."
 
       ;; process body in the new scope.
       (let ((lambda-node
-              (make-lambda-syntax vardecls (pass/alphatization%body env body))))
+              (make-lambda-syntax vardecls
+                                  (pass/alphatization%body env body)
+                                  lambda-symtab)))
         (env:close-scope env :var)
         lambda-node))))
 
@@ -980,10 +1020,12 @@ item and defaults to IDENTITY."
          (body-form (let-body expr))
          ;; Firt convert the bindings to their AST form,
          ;; ensuring the value expressions are using the current env.
-         (bindings (pass/alphatization%let-bindings env bindings-form)))
+         (bindings (pass/alphatization%let-bindings env bindings-form))
+         ;; record the symbol table scope we're opening in case we need to
+         ;; explicitly muck with it later.
+         (symtab (env:open-scope env :var)))
 
     ;; Now augment the environment for the body with the new variables.
-    (env:open-scope env :var)
     (seq-iter bindings
               (lambda (bdngs)
                 (let* ((var (var (vardecl (binding bdngs))))
@@ -1000,7 +1042,8 @@ item and defaults to IDENTITY."
 
     ;; Translate the body with the new vars in scope.
     (let ((let-node (make-let-syntax bindings
-                                     (pass/alphatization%body env body-form))))
+                                     (pass/alphatization%body env body-form)
+                                     symtab)))
       (env:close-scope env :var)
       let-node)))
 
@@ -1019,10 +1062,10 @@ item and defaults to IDENTITY."
 (defun pass/alphatization%letrec-syntax (env expr)
   (let* ((bindings-form (letrec-bindings expr))
          (binding-vars (letrec-binding-vars bindings-form))
-         (body-form (letrec-body expr)))
+         (body-form (letrec-body expr))
+         (symtab (env:open-scope env :var)))
 
     ;; First, we find and insert all declaring variables into the symbol table.
-    (env:open-scope env :var)
     (loop :for var :in binding-vars
           :for syment = (make-syment/local :bound-p t) ;; bound-p seems wrong.
           :do (setf (mutated-p syment) t) ;; have to mutate binding!
@@ -1044,7 +1087,8 @@ item and defaults to IDENTITY."
                ;; Now all binding values are processed in the scope of the
                ;; variables being bound.
                bindings
-               (pass/alphatization%body env body-form))))
+               (pass/alphatization%body env body-form)
+               symtab)))
         (env:close-scope env :var)
         letrec-node))))
 
@@ -1172,7 +1216,37 @@ item and defaults to IDENTITY."
    (pass/alphatization%exprs env exprs)))
 
 (defun pass/alphatization%toplevel (env exprs)
-  (make-toplevel (pass/alphatization%body env exprs)))
+  ;; Herein we define what symbols and symbol table entries are already
+  ;; available in the toplevel.
+  ;;
+  ;; TODO: When we start combining toplevels in a sequential order, this might
+  ;; need revisiting to define whatever behavior we desire.
+  (let* ((syntax-symbols
+           '(define if begin lambda let letrec set! true false null))
+         (prim-symbols
+           '(fxadd1 fxsub1
+             fixnum->char char->fixnum
+             fxzero? fixnum? null? char? boolean?
+             not
+             fxlognot
+             fx+ fx- fx* fx/ fxlogand fxlogor
+             fx= fx< fx<= fx> fx>=
+             char= char< char<= char> char>=))
+         (symtab (env:open-scope env :var))) ;; NOTE: leave this scope open!
+
+    ;; Construct initial environment
+    (loop :for sym :in syntax-symbols
+          :do (env:add-definition env :var sym (make-syment/syntax)))
+    (loop :for sym :in prim-symbols
+          :do (env:add-definition env :var sym (make-syment/prim)))
+
+    (let ((toplevel (make-toplevel (pass/alphatization%body env exprs)
+                                   symtab)))
+      ;; and finally we close the toplevel scope after processing all toplevel
+      ;; forms.
+      (env:close-scope env :var)
+
+      toplevel)))
 
 ;; Main entry. Convert one toplevel of an incoming source to AST.
 (defun pass/alphatization (env exprs)
@@ -1323,43 +1397,43 @@ item and defaults to IDENTITY."
       result)))
 
 ;; -----------------------------------------------------------------------
+;; Perform ONLY :flat closure conversion for now. This is mostly a functional
+;; pass that can rewrite or replace some ast nodes.
+;; -----------------------------------------------------------------------
+
+(defgeneric pass/closure-conversion (style node))
+
+(defmethod pass/closure-conversion (style (self (eql nil)))
+  nil)
+
+;; TODO: Just so I can put it into the dataflow...
+(defmethod pass/closure-conversion ((style (eql :flat)) (self toplevel))
+  (setf (body self) (pass/closure-conversion style (body self)))
+  self)
+
+(defmethod pass/closure-conversion ((style (eql :flat)) (self body))
+  self)
+
+
+;; -----------------------------------------------------------------------
 ;; Test compilation of a single toplevel set of forms.
 ;; -----------------------------------------------------------------------
 
-(defun init-global-environment ()
-  (let ((env (env:make-env :var))
-        (syntax-symbols
-          '(define if begin lambda let letrec set! true false null))
-        (prim-symbols
-          '(fxadd1 fxsub1
-            fixnum->char char->fixnum
-            fxzero? fixnum? null? char? boolean?
-            not
-            fxlognot
-            fx+ fx- fx* fx/ fxlogand fxlogor
-            fx= fx< fx<= fx> fx>=
-            char= char< char<= char> char>=)))
-
-    ;; Construct initial environment
-    (env:open-scope env :var)
-    (loop :for sym :in syntax-symbols
-          :do (env:add-definition env :var sym (make-syment/syntax)))
-    (loop :for sym :in prim-symbols
-          :do (env:add-definition env :var sym (make-syment/prim)))
-
-    ;; global :var scope left open!
-    env))
-
 (defun c1 (unparse-style top-forms)
-  (let ((env (init-global-environment))) ;; a global scope is left open....
+  (let ((env (env:make-env :valid-categories `(:var)))
+        (ast nil))
 
-    (let* ((ast (pass/alphatization env top-forms)))
+    ;; Compiler passes.
+    (setf ast (pass/alphatization env top-forms))
 
-      ;; side effect passes...
-      (pass/free-variables ast)
+    ;; side effect the free variables into the ast.
+    ;; TODO: Debate making this return values of AST and free variables.
+    (pass/free-variables ast)
 
-      (unparse unparse-style 0 ast)
+    (setf ast (pass/closure-conversion :flat ast))
 
-      (env:close-scope env :var)
+    (unparse unparse-style 0 ast)
 
-      ast)))
+    (env:close-scope env :var)
+
+    ast))
