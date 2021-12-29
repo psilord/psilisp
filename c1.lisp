@@ -129,22 +129,29 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
    ;; variable reference.
    (%bound-p :accessor bound-p :initarg :bound-p :initform nil)
 
-   ;; Squshy stuff below...
+   ;; Squishy stuff below. Type/Kind handling is not implemented and
+   ;; is all kinds of crappily implemented with predicates.
 
-   ;; Is this syment for a closed variable?
+   ;; This syment is used for a variable being used as a closure record.
+   (%closure-p :accessor closure-p :initarg :closure-p :initform nil)
+   ;; Does this syment represent a closed variable?
+   ;; It is used for syments of individual field variables in a closure.
    (%closed-p :accessor closed-p :initarg :closed-p :initform nil)
-   ;; a reference to the syment which was closed over.
+   ;; A reference to the free variable syment which was closed over.
+   ;; From that, one can deduce mutable cells and other important things for
+   ;; accessing the data.
    (%closed-syment :accessor closed-syment :initarg :closed-syment
                    :initform nil)
 
-   ;; Does this syment represent a closure record/environment that contains its
-   ;; own symbol table of closure variable syments. The key of the closure
-   ;; symtab  is the variable id, the value is a syment record which ultimately
-   ;; contains a reference to the symtab entry of what it closed over.
-   (%closure-p :accessor closure-p :initarg :closure-p :initform nil)
-   ;; symtab of free var ids to closed syment entries.
-   (%closure-symtab :accessor closure-symtab :initarg :closure-symtab
-                    :initform nil)
+   ;; If this variable is a closure record variable, then this is a symtab of
+   ;; field ids to individual syment entries for that field.  This can model
+   ;; arrays of the keys are integers, records if they are symbolic names,
+   ;; other stuff probably too. :compound types are allowed to nest.  etc, etc.
+   ;;
+   ;; TODO: maybe try and extend the type system to indicate atomic versus
+   ;; compound variables among other stuff. Lots of exploration can be done
+   ;; here for builtin types like hash tables and whatnot.
+   (%fields :accessor fields :initarg :fields :initform nil)
 
    ))
 (flexible-constructor syment)
@@ -286,6 +293,11 @@ and default it to :any"
   ((%var :accessor var :initarg :var :type var)))
 (simple-constructor vardecl var)
 
+;; TODO: For closure conversion, add in a "field" slot which indicates which
+;; field we're referencing in a closure record held in id/syment. This is a
+;; naive way to do this it seems, but doesn't seem TOO terrible. I'm trying to
+;; force the closure knowledge into the symbol table as opposed to AST nodes
+;; representing explicit accessors since those are harder to reason about.
 (defclass var (expr)
   ((%id :accessor id :initarg :id :type symbol)
    (%syment :accessor syment :initarg :syment :type syment)))
@@ -1622,97 +1634,112 @@ item and defaults to IDENTITY."
 ;; that can rewrite or replace some ast nodes at the appropriate places.
 ;; -----------------------------------------------------------------------
 
-(defgeneric pass/closure-conversion (style node))
+(defgeneric pass/closure-conversion (style vsubs node))
 
-(defmethod pass/closure-conversion (style (self (eql nil)))
+(defmethod pass/closure-conversion (style vsubs (self (eql nil)))
   nil)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self toplevel))
-  (setf (body self) (pass/closure-conversion style (body self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self toplevel))
+  (setf (body self) (pass/closure-conversion style vsubs (body self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self body))
-  (setf (defs self) (pass/closure-conversion style (defs self)))
-  (setf (exprs self) (pass/closure-conversion style (exprs self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self body))
+  (setf (defs self) (pass/closure-conversion style vsubs (defs self)))
+  (setf (exprs self) (pass/closure-conversion style vsubs (exprs self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self defs))
-  (setf (def self) (pass/closure-conversion style (def self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self defs))
+  (setf (def self) (pass/closure-conversion style vsubs (def self)))
   (when (more self)
-    (setf (more self) (pass/closure-conversion style (more self))))
+    (setf (more self) (pass/closure-conversion style vsubs (more self))))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self def))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self def))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self exprs))
-  (setf (expr self) (pass/closure-conversion style (expr self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self exprs))
+  (setf (expr self) (pass/closure-conversion style vsubs (expr self)))
   (when (more self)
-    (setf (more self) (pass/closure-conversion style (more self))))
+    (setf (more self) (pass/closure-conversion style vsubs (more self))))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self vardecls))
-  (setf (vardecl self) (pass/closure-conversion style (vardecl self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self vardecls))
+  (setf (vardecl self) (pass/closure-conversion style vsubs (vardecl self)))
   (when (more self)
-    (setf (more self) (pass/closure-conversion style (more self))))
+    (setf (more self) (pass/closure-conversion style vsubs (more self))))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self vardecl))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self vardecl))
   ;; TODO: a vardecl can never change during closure conversion?
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self var))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self var))
   self)
 
 ;; all literals are just themselves.
-(defmethod pass/closure-conversion ((style (eql :flat)) (self literal))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self literal))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self prim))
-  (setf (op self) (pass/closure-conversion style (op self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self prim))
+  (setf (op self) (pass/closure-conversion style vsubs (op self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self prim-unary))
-  (setf (op self) (pass/closure-conversion style (op self))
-        (arg0 self) (pass/closure-conversion style (arg0 self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self prim-unary))
+  (setf (op self) (pass/closure-conversion style vsubs (op self))
+        (arg0 self) (pass/closure-conversion style vsubs (arg0 self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self prim-binary))
-  (setf (op self) (pass/closure-conversion style (op self))
-        (arg0 self) (pass/closure-conversion style (arg0 self))
-        (arg1 self) (pass/closure-conversion style (arg1 self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self prim-binary))
+  (setf (op self) (pass/closure-conversion style vsubs (op self))
+        (arg0 self) (pass/closure-conversion style vsubs (arg0 self))
+        (arg1 self) (pass/closure-conversion style vsubs (arg1 self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self define-syntax))
-  (setf (vardecl self) (pass/closure-conversion style (vardecl self))
-        (value self) (pass/closure-conversion style (value self)))
+;; TODO: This is fallow.
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self define-syntax))
+  (setf (vardecl self) (pass/closure-conversion style vsubs (vardecl self))
+        (value self) (pass/closure-conversion style vsubs (value self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self lambda-syntax))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self lambda-syntax))
   ;; TODO: this is where we convert this to a closure object and substitute the
   ;; new variables into the body.
   ;;
   ;; fields: vardecls, body
+
+  ;; TODO: I believe I need to pass a set of FREE-VAR -> CLOSED-VAR sub set
+  ;; to pass/closure-conversion so it replaces uses of free vars with closed
+  ;; versions as it performs its recursive work.
+
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self set!-syntax))
-  (setf (var self) (pass/closure-conversion style (var self))
-        (value self) (pass/closure-conversion style (value self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self set!-syntax))
+  (setf (var self) (pass/closure-conversion style vsubs (var self))
+        (value self) (pass/closure-conversion style vsubs (value self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self if-syntax))
-  (setf (choice self) (pass/closure-conversion style (choice self))
-        (consequent self) (pass/closure-conversion style (consequent self))
-        (alternate self) (pass/closure-conversion style (alternate self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self if-syntax))
+  (setf (choice self) (pass/closure-conversion style vsubs (choice self))
+        (consequent self) (pass/closure-conversion style vsubs
+                                                   (consequent self))
+        (alternate self) (pass/closure-conversion style vsubs
+                                                  (alternate self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self begin-syntax))
-  (setf (body self) (pass/closure-conversion style (body self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self begin-syntax))
+  (setf (body self) (pass/closure-conversion style vsubs (body self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) (self application))
-  (setf (op self) (pass/closure-conversion style (op self))
-        (args self) (pass/closure-conversion style (args self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+                                    (self application))
+  (setf (op self) (pass/closure-conversion style vsubs (op self))
+        (args self) (pass/closure-conversion style vsubs (args self)))
   self)
 
 ;; -----------------------------------------------------------------------
@@ -1733,10 +1760,11 @@ item and defaults to IDENTITY."
      ;; debugging output & recording given the original source.
      (values ast toplevel-freevars) (pass/free-variables ast)
 
-     ;; Convert LET, LETREC nodes to simpler LAMBDA [ + SET! ] nodes.
+     ;; Convert LET, LETREC nodes to a lower level LAMBDA / APPLICATION forms
      ast (pass/desugar ast)
 
-     ast (pass/closure-conversion :flat ast)
+     ast (pass/closure-conversion :flat nil ast)
+
      )
 
     (unparse unparse-style 0 ast)
