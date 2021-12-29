@@ -258,7 +258,70 @@
                                   z) ; 2 -> z
              :func (lambda (c9 h) (+ (cref c9 0)
                                      (cell-ref (cref c9 1))
-                                     (cref c9 2))))))))
+                                     (cref c9 2)
+                                     h)))))))
+
+;; Pass 4: Lifting of the closed functions
+(labels ((cf0
+             (lambda (c0 z)
+               (list
+                (make-closure
+                 :closed-vars (vector) ; No FV to capture.
+                 :func cf1)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 0)) ; 0 -> [x copy from c0]
+                 :func cf2)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 1)) ; 0 -> [y cell copy from c0]
+                 :func cf3)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 1)) ; 0 -> [y cell copy from c0]
+                 :func cf4)
+
+                (make-closure
+                 :closed-vars (vector z) ; 0 -> z
+                 :func cf5)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 0) ; 0 -> [x copy from c0]
+                                      (cref c0 1)) ; 1 -> [y cell copy from c0]
+                 :func cf6)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 0) ; 0 -> [x copy from c0]
+                                      z) ; 1 -> z
+                 :func cf7)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 1) ; 0 -> [y cell copy from c0]
+                                      z) ; 1 -> z
+                 :func cf8)
+
+                (make-closure
+                 :closed-vars (vector (cref c0 0) ; 0 -> [x copy from c0]
+                                      (cref c0 1) ; 1 -> [y cell copy from c0]
+                                      z) ; 2 -> z
+                 :func cf9))))
+         (cf1 (lambda (c1 a) a))
+         (cf2 (lambda (c2 b) (+ (cref c2 0) b)))
+         (cf3 (lambda (c3 c) (+ (cell-ref (cref c3 0)) c)))
+         (cf4 (lambda (c4 cc) (cell-set! (cref c4 0) cc)))
+         (cf5 (lambda (c5 d) (+ (cref c5 0) d)))
+         (cf6 (lambda (c6 e) (+ (cref c6 0) (cell-get (cref c6 1)) e)))
+         (cf7 (lambda (c7 f) (+ (cref c7 0) (cref c7 1) f)))
+         (cf8 (lambda (c8 g)
+                (+ (cell-ref (cref c7 0)) (cref c7 1) g)))
+         (cf9 (lambda (c9 h)
+                (+ (cref c9 0) (cell-ref (cref c9 1)) (cref c9 2) h))))
+
+  (let ((x 10)
+        (y (make-cell 20)))
+    (make-closure
+     :closed-vars (vector x y) ; 0 -> x, 1 -> y cell
+     :func cf0)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
