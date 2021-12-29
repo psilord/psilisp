@@ -77,7 +77,9 @@
 
 ;; The second form of the language after closure conversion is the above, but
 ;; <lambda> has been replaced with <closure> and <clambda> for the closed
-;; functions that contain no free variables.
+;; functions that contain no free variables. There is no actual source form of
+;; this portion of the grammar, it is AST only but can be emitted in an
+;; unparse situation.
 ;;
 ;; <closed-vars> ::= <var> <closed-vars>
 ;;            |
@@ -1355,7 +1357,7 @@ item and defaults to IDENTITY."
   self)
 
 (defmethod pass/desugar ((self let-syntax))
-  ;; Convert the LET form to a LAMBDA form.
+  ;; Convert the LET form to an LAMBDA / APPLICATION form.
   (let ((lambda-vardecl-list nil)
         (lambda-argexpr-list nil)
         (lambda-vardecls nil)
@@ -1381,12 +1383,64 @@ item and defaults to IDENTITY."
                                            (symtab self))))
       (setf (free-vars lambda-node) (free-vars self))
 
+      ;; TODO: maybe indicate that I performed a LET desurgaring here?
       (make-application lambda-node (pass/desugar lambda-arg-exprs)))))
 
 (defmethod pass/desugar ((self letrec-syntax))
-  ;; TODO: this is where we convert the LETREC to a LAMBDA + SET! construct.
+  ;; Convert the LETREC to a LAMBDA + SET! / APPLICATION form
   ;; fields: bindings, body
-  self)
+  (let ((lambda-vardecl-list nil)
+        (lambda-argexpr-list nil)
+        (lambda-vardecls nil)
+        ;; we will tack the body on the end of SET! expressions
+        (lambda-set!-exprs (exprs (body self)))
+        (lambda-nullarg-exprs nil))
+    (seq-iter (bindings self)
+              (lambda (bindings-node)
+                (let ((binding (binding bindings-node)))
+                  (push (vardecl binding) lambda-vardecl-list)
+                  (push (value binding) lambda-argexpr-list))))
+
+    ;; Now convert the two lists (and reverse them) to AST appropriate seq
+    ;; equivalents.
+    (loop :for current-decl :in lambda-vardecl-list
+          :for current-arg :in lambda-argexpr-list
+          :do (setf
+               ;; the formal decls to the lambda node
+               lambda-vardecls
+               (make-vardecls current-decl lambda-vardecls)
+
+               ;; the prefixing set! expression to perform all assignments
+               ;; placed before the body.
+               lambda-set!-exprs
+               (make-exprs
+                (make-set!-syntax (make-var (id (var current-decl))
+                                            (syment (var current-decl)))
+                                  current-arg)
+                lambda-set!-exprs)
+
+               ;; the collection of NULL arguments passed to the lambda
+               ;;
+               ;; TODO: I should use some sort of unspecified here or something
+               ;; that doesn't intefere with typing inference. Maybe a
+               ;; "weak" type that is set upon assignment and cannot be used
+               ;; unless assigned?
+               lambda-nullarg-exprs
+               (make-exprs (make-literal-null) lambda-nullarg-exprs)))
+
+    ;; Repair the body to contain the new generated prefixed set! expressions.
+    (setf (exprs (body self)) lambda-set!-exprs)
+
+    ;; Finally, reconstruct the AST representation of the LETREC form as a
+    ;; an application of the lambda + set! form to its NULL arguments.
+    (let ((lambda-node (make-lambda-syntax lambda-vardecls
+                                           (pass/desugar (body self))
+                                           (symtab self))))
+      (setf (free-vars lambda-node) (free-vars self))
+
+      ;; TODO: maybe indicate that I performed a LETREC desurgaring here?
+      (make-application lambda-node (pass/desugar lambda-nullarg-exprs)))))
+
 
 (defmethod pass/desugar ((self set!-syntax))
   (setf (var self) (pass/desugar (var self))
@@ -1635,18 +1689,10 @@ item and defaults to IDENTITY."
   self)
 
 (defmethod pass/closure-conversion ((style (eql :flat)) (self lambda-syntax))
-  ;; TODO: this is where we convert this to a closure object instead
+  ;; TODO: this is where we convert this to a closure object and substitute the
+  ;; new variables into the body.
+  ;;
   ;; fields: vardecls, body
-  self)
-
-(defmethod pass/closure-conversion ((style (eql :flat)) (self let-syntax))
-  ;; TODO: this is where we convert this to a closure object instead
-  ;; fields: bindings, body
-  self)
-
-(defmethod pass/closure-conversion ((style (eql :flat)) (self letrec-syntax))
-  ;; TODO: this is where we convert this to a closure object instead
-  ;; fields: bindings, body
   self)
 
 (defmethod pass/closure-conversion ((style (eql :flat)) (self set!-syntax))
@@ -1681,11 +1727,15 @@ item and defaults to IDENTITY."
     ;; Compiler passes.
     (setf
      ast (pass/alphatization env top-forms)
+
      ;; TODO: Prolly should push freevar analysis later to a lower-level
      ;; representation (after desugaring), but doing it here is useful for
      ;; debugging output & recording given the original source.
      (values ast toplevel-freevars) (pass/free-variables ast)
+
+     ;; Convert LET, LETREC nodes to simpler LAMBDA [ + SET! ] nodes.
      ast (pass/desugar ast)
+
      ast (pass/closure-conversion :flat ast)
      )
 
