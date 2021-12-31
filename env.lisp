@@ -11,18 +11,18 @@
 ;; --------
 (defclass env ()
   ((%defined-categories :accessor defined-categories
-			:initarg :defined-categories)
+                        :initarg :defined-categories)
    (%categories :accessor categories
-		:initarg :categories
-		:initform (make-hash-table :test #'equal))))
+                :initarg :categories
+                :initform (make-hash-table :test #'equal))))
 
 (defun make-env (&key valid-categories)
   (make-instance 'env
-		 :defined-categories
-		 (let ((def-cats (make-hash-table :test #'equal)))
-		   (dolist (vc valid-categories)
-		     (setf (gethash vc def-cats) t))
-		   def-cats)))
+                 :defined-categories
+                 (let ((def-cats (make-hash-table :test #'equal)))
+                   (dolist (vc valid-categories)
+                     (setf (gethash vc def-cats) t))
+                   def-cats)))
 
 ;; a check to ensure I don't have any typos in my environmental categories.
 (defun valid-category-p (env category)
@@ -49,9 +49,10 @@ return it. NOTE: This function does no scope opening/closing."
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
     (bst:close-scope blsymtab)))
 
-(defun add-definition (env category name sym)
+(defun add-definition (env category name sym &key (scope :inner))
+  ;; scope can be :inner or :outer-most
   (let ((blsymtab (ensure-blsymtab-in-category env category)))
-    (bst:add-definition blsymtab name sym)))
+    (bst:add-definition blsymtab name sym :scope scope)))
 
 (defun find-definition (env category name &key (scope :inner))
   (let ((blsymtab (ensure-blsymtab-in-category env category)))

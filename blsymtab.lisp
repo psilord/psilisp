@@ -28,9 +28,13 @@
   "Remove the innermost frame from the environment."
   (pop (frames bst)))
 
-(defun add-definition (bst name sym)
-  "Add a definition to the innermost scope."
-  (let ((st (first (frames bst))))
+(defun add-definition (bst name sym &key (scope :inner))
+  "Add a definition to a scope. The :SCOPE keyword is either :inner (the
+default) or :outer-most (the first or top scope in the block structured
+symbol table)."
+  (let ((st (ecase scope
+              (:inner (first (frames bst)))
+              (:outer-most (first (last (frames bst)))))))
     (unless st
       (error "add-definition: There are no open scopes!"))
     (st:insert-symbol st name sym)))

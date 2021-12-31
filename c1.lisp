@@ -131,28 +131,35 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
 
    ;; Squishy stuff below. Type/Kind handling is not implemented and
    ;; is all kinds of crappily implemented with predicates.
+   ;;
+   ;; Closed variables use syments which are closed-p T and have a closure-id
+   ;; of an integer. All variables in the _same_ scope with closire-id of
+   ;; an integer are grouped by that integer into a closure. The actual
+   ;; representation of the closure object is left to other parts of the
+   ;; compiler. This makes closed variables simply unique entries in the
+   ;; current scope symtab that can be gathered together later.
 
-   ;; This syment is used for a variable being used as a closure record.
-   (%closure-p :accessor closure-p :initarg :closure-p :initform nil)
    ;; Does this syment represent a closed variable?
    ;; It is used for syments of individual field variables in a closure.
    (%closed-p :accessor closed-p :initarg :closed-p :initform nil)
+   ;; This indicates of the closed var is actually stored in an allocated
+   ;; closure object, or can be passed in as an extra argument to the function.
+   ;; Analysis of the closure indicates which one might be possible.  A
+   ;; conservative default is ALL of them could be :alloc, but this can cause
+   ;; memory churn. In certin situations, we don't need to actually alloc space
+   ;; and can just pass it as an argument if we know the function is never used
+   ;; as data.
+   ;;
+   ;; The valid values are: :alloc, :argument.
+   (%closure-style :accessor closure-style :initarg :closure-style
+                   :initform :alloc)
+   ;; Which closure grouping is this closed variable a part of?
+   (%closure-id :accessor closure-id :initarg :closure-id :initform nil)
    ;; A reference to the free variable syment which was closed over.
    ;; From that, one can deduce mutable cells and other important things for
-   ;; accessing the data.
+   ;; accessing the closed variable.
    (%closed-syment :accessor closed-syment :initarg :closed-syment
                    :initform nil)
-
-   ;; If this variable is a closure record variable, then this is a symtab of
-   ;; field ids to individual syment entries for that field.  This can model
-   ;; arrays of the keys are integers, records if they are symbolic names,
-   ;; other stuff probably too. :compound types are allowed to nest.  etc, etc.
-   ;;
-   ;; TODO: maybe try and extend the type system to indicate atomic versus
-   ;; compound variables among other stuff. Lots of exploration can be done
-   ;; here for builtin types like hash tables and whatnot.
-   (%fields :accessor fields :initarg :fields :initform nil)
-
    ))
 (flexible-constructor syment)
 
@@ -1116,13 +1123,13 @@ item and defaults to IDENTITY."
   (let ((var (pass/alphatization%var env (set!-var expr)))
         (value (pass/alphatization%expr env (set!-expr expr))))
 
-    ;; poke in a global variable if nothing in local scope.
-    ;; TODO: We need to tell the user the best thing if we're going to
-    ;; create a global variable or not automatically. Maybe it was a typo?
-    ;; Maybe it was intentional? Figure out the best thing to state to the
-    ;; user, if anything.
-    (let* ((syment (env:find-definition env :var (id var) :scope :any))
-           (syment (if syment syment (make-syment/global))))
+    (let* ((syment (env:find-definition env :var (id var) :scope :any)))
+      ;; NOTE: If no syment, we treat it as a global unbound variable.
+      ;; and jam it into the outer most scope so everyone in the future
+      ;; compilation can see it.
+      (unless syment
+        (setf syment (make-syment/global))
+        (env:add-definition env :var (id var) syment :scope :outer-most))
 
       (unless (mutable-p syment)
         (error "ERROR: Variable ~A is not mutable via SET!" (id var)))
@@ -1174,14 +1181,10 @@ item and defaults to IDENTITY."
      (let ((v (pass/alphatization%var env expr)))
        (let ((syment (env:find-definition env :var (id v) :scope :any)))
          (unless syment
-           (loglvl :error
-                   "ERROR: Variable reference ~A is undefined.~%" (id v))
-           ;; NOTE: We add a new unbound definition in response to the
-           ;; unknown variable to which we refer.
-           (let ((unbound-syment (make-syment/local)))
-             (env:add-definition env :var (id v) unbound-syment)
-             (setf syment unbound-syment)))
-
+           (loglvl :error "Undefined var: ~A. Treating as gobal.~%" (id v))
+           ;; We assume the unknown variable is a global.
+           (setf syment (make-syment/global))
+           (env:add-definition env :var (id v) syment :scope :outer-most))
          ;; Now finally bind the variable to the symbol table entry.
          (setf (syment v) syment)
          v)))
@@ -1770,5 +1773,8 @@ item and defaults to IDENTITY."
     (unparse unparse-style 0 ast)
 
     (logit "Free variables at toplevel: ~A~%" toplevel-freevars)
+    (dolist (fv toplevel-freevars)
+      (destructuring-bind (id . syment) fv
+        (logit "Id: ~A -> ~A~%" id syment)))
 
     ast))
