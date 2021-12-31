@@ -1710,7 +1710,9 @@ item and defaults to IDENTITY."
 (defmethod pass/closure-conversion ((style (eql :flat)) vsubs
                                     (self lambda-syntax))
   ;; TODO: this is where we convert lambda nodes into closure nodes and
-  ;; recursively substitute the new closed variables into the body.
+  ;; recursively substitute the new closed variables into the body.  The
+  ;; closure representation is not specified here and left ambiguous for later
+  ;; passes to concretize.
   ;;
   ;; fields: vardecls, body, symtab
 
