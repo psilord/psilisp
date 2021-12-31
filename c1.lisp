@@ -1709,14 +1709,64 @@ item and defaults to IDENTITY."
 
 (defmethod pass/closure-conversion ((style (eql :flat)) vsubs
                                     (self lambda-syntax))
-  ;; TODO: this is where we convert this to a closure object and substitute the
-  ;; new variables into the body.
+  ;; TODO: this is where we convert lambda nodes into closure nodes and
+  ;; recursively substitute the new closed variables into the body.
   ;;
-  ;; fields: vardecls, body
+  ;; fields: vardecls, body, symtab
 
-  ;; TODO: I believe I need to pass a set of FREE-VAR -> CLOSED-VAR sub set
+  ;; I believe I need to pass a set of FREE-VAR -> CLOSED-VAR sub set
   ;; to pass/closure-conversion so it replaces uses of free vars with closed
   ;; versions as it performs its recursive work.
+
+  ;; The FREE-VAR -> CLOSED-VAR set cannot be a side effecting storage, but
+  ;; a functional data structure so when I make changes to it for deeper
+  ;; recursive calls, I don't break anything yet to be computed.
+
+  ;; This is an example where I take original code, then formally reason
+  ;; about the flat closure behavior with successive alterations to a lower
+  ;; form that is in terms of closures.
+  ;;
+  ;; FV are free variables detected for that lambda.
+  ;; CL are closure variables generated for that lambda
+  ;; FV->CL is the mapping from freevar to cvar for that lambda
+  ;; FVCL is K->{L=>M} where K is the freevar being closed, L is the
+  ;;   variable holding the freevar's value in the scope BEFORE the lambda is
+  ;;   entered (and L may or may not have been a variable that was the result
+  ;;   of a previous closure), and M is the new closed var that will exist in
+  ;;   the lambda's body. The => symbol is a copy of the value of the variable.
+  ;;
+  ;; Original code.
+  ;; (lambda (a)
+  ;;  (lambda (b)
+  ;;   (lambda (c)
+  ;;    (lambda (d)
+  ;;     (fx+ (fx+ a b) (fx+ c d))))))
+  ;;
+  ;; Do free variable mapping to closed variables and determine copies.
+  ;; (lambda (a)
+  ;;   FV:{}, CL:{}, FV->CL:{}, FVCL:{}
+  ;;  (lambda (b)
+  ;;   FV:{a}, CL:{Z}, FV->CL:{a->Z}, FVCL:{a->[a=>Z]}
+  ;;   (lambda (c)
+  ;;    FV:{a, b}, CL:{X, Y}, FVCL:{a->[Z=>X], b->[b=>Y]}
+  ;;    (lambda (d)
+  ;;     FV:{a, b, c}, CL:{T, U, V}, FVCL:{a->[X=>T, b->[Y=>U], c->[c=>V]}
+  ;;     (fx+ (fx+ a b) (fx+ c d))))))
+  ;;
+  ;; Rewrite into closures. The {} represent copies which must be done into the
+  ;; closure environment before entering the lambda (which then has the closure
+  ;; env passed to it as an arg). In the {} it is FV:fromvar=>tocvar, whic
+  ;; means "On behalf of FV, we copy 'fromvar' to 'tocvar' and 'tocvar' is the
+  ;; closed variable available in the lambda's body.
+  ;;
+  ;; (closure {} (a)
+  ;;  (closure {a:a=>Z} (b)
+  ;;   (closure {a:Z=>X, b:b=>Y} (c)
+  ;;    (closure {a:X=>T, b:Y=>U, c:c=>V} (d)
+  ;;     (fx+ (fx+ T U) (fx+ V d))))))
+  ;;
+  ;; NOTE: It is probably the case that FVCL is the thing that I must curate
+  ;; and pass down the recursion.
 
   self)
 
