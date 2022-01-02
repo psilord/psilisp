@@ -1637,6 +1637,78 @@ item and defaults to IDENTITY."
 ;; that can rewrite or replace some ast nodes at the appropriate places.
 ;; -----------------------------------------------------------------------
 
+;; -----------------------------------------------------------------------
+;; FCVL description and management for variable closure book keeping.
+;; FVCL structure:
+;; <fvcl> ::= hash table #'equal: key is <free-var>, value is <fv-rename>
+;;
+;; <free-var> ::= <var-spec>
+;; <fv-rename> ::= {<from-var> <to-var>}
+;; <from-var> ::= <var-spec>
+;; <to-var> ::= <var-spec>
+;; <var-spec> ::= {id syment}
+
+;; -----------------------------------------------------------------------
+(defstruct var-spec id syment)
+(defstruct (fv-rename (:copier nil)) from to) ;; each field is a var-spec
+(defun copy-fv-rename (fv-rename)
+  (let ((from-copy (copy-var-spec (fv-rename-from fv-rename)))
+        (to-copy (copy-var-spec (fv-rename-to fv-rename))))
+    (make-fv-rename :from from-copy :to to-copy)))
+
+(defun make-fvcl ()
+  (make-hash-table :test #'equal))
+
+(defun fvcl-rename (fv-spec fvcl)
+  "If there is a rename for fv-spec, return it, otherwise NIL."
+  (gethash fv-spec fvcl))
+
+(defun (setf fvcl-rename) (new-rename fv-spec fvcl)
+  "If there is rename for fv-spec, replace it with new-rename. Otherwise
+insert the new-rename into FVCL."
+  (setf (gethash fv-spec fvcl) new-rename))
+
+(defun fvcl-remove-rename (fv-spec fvcl)
+  "If there is a rename for fv-spec, remove it."
+  (remhash fv-spec fvcl))
+
+(defun fvcl-copy (fvcl)
+  "Copy FVCL internal structure, but don't deep copy beyond that."
+  (let ((fvcl-copy (make-hash-table :test #'equal)))
+    (maphash (lambda (fv-spec rename)
+               (setf (fvcl-rename (copy-var-spec fv-spec) fvcl-copy)
+                     (copy-fv-rename rename)))
+             fvcl)
+    fvcl-copy))
+
+(defun fvcl-dump (fvcl)
+  (logit "FVCL:~%")
+  (maphash
+   (lambda (fv-spec rename)
+     (let ((from (fv-rename-from rename))
+           (to (fv-rename-to rename)))
+       (logiti 1 "(~A, ~A)->[(~A, ~A)=>(~A, ~A)]~%"
+               (var-spec-id fv-spec) (var-spec-syment fv-spec)
+               (var-spec-id from) (var-spec-syment from)
+               (var-spec-id to) (var-spec-syment to))))
+   fvcl))
+
+(defun fvcl-test ()
+  ;; TEST information: (closure {a:X=>T, b:Y=>U, c:c=>V} (d) ...)
+  (let ((fvcl (make-fvcl))
+        (fv-a (make-var-spec :id 'a :syment 0))
+        (fv-b (make-var-spec :id 'b :syment 1))
+        (fv-c (make-var-spec :id 'c :syment 2))
+        (cl-x (make-var-spec :id 'x :syment 3))
+        (cl-y (make-var-spec :id 'y :syment 4))
+        (cl-t (make-var-spec :id 't :syment 5))
+        (cl-u (make-var-spec :id 'u :syment 6))
+        (cl-v (make-var-spec :id 'v :syment 7)))
+    (setf (fvcl-rename fv-a fvcl) (make-fv-rename :from cl-x :to cl-t)
+          (fvcl-rename fv-b fvcl) (make-fv-rename :from cl-y :to cl-u)
+          (fvcl-rename fv-c fvcl) (make-fv-rename :from fv-c :to cl-v))
+    (fvcl-dump fvcl)))
+
 (defgeneric pass/closure-conversion (style vsubs node))
 
 (defmethod pass/closure-conversion (style vsubs (self (eql nil)))
@@ -1752,12 +1824,12 @@ item and defaults to IDENTITY."
   ;;   (lambda (c)
   ;;    FV:{a, b}, CL:{X, Y}, FVCL:{a->[Z=>X], b->[b=>Y]}
   ;;    (lambda (d)
-  ;;     FV:{a, b, c}, CL:{T, U, V}, FVCL:{a->[X=>T, b->[Y=>U], c->[c=>V]}
+  ;;     FV:{a, b, c}, CL:{T, U, V}, FVCL:{a->[X=>T], b->[Y=>U], c->[c=>V]}
   ;;     (fx+ (fx+ a b) (fx+ c d))))))
   ;;
   ;; Rewrite into closures. The {} represent copies which must be done into the
   ;; closure environment before entering the lambda (which then has the closure
-  ;; env passed to it as an arg). In the {} it is FV:fromvar=>tocvar, whic
+  ;; env passed to it as an arg). In the {} it is FV:fromvar=>tocvar, which
   ;; means "On behalf of FV, we copy 'fromvar' to 'tocvar' and 'tocvar' is the
   ;; closed variable available in the lambda's body.
   ;;
@@ -1769,6 +1841,17 @@ item and defaults to IDENTITY."
   ;;
   ;; NOTE: It is probably the case that FVCL is the thing that I must curate
   ;; and pass down the recursion.
+
+
+  ;; algorithm:
+
+  ;; LAMBDA-SYNTAX node:
+  ;; 1. Generate a new Cvar for each FVar
+  ;; 2. Looking at the FVCL passed in, find each FV then use the map passed in
+  ;; to generate a new map for this lambda node.
+
+  ;; VAR node:
+  ;; 1. if the id/syment match something in FVCL, perform a substitution.
 
   self)
 
