@@ -1638,7 +1638,10 @@ item and defaults to IDENTITY."
 ;; -----------------------------------------------------------------------
 
 ;; -----------------------------------------------------------------------
-;; FCVL description and management for variable closure book keeping.
+;; FCVL description and management for variable closure book keeping.  The
+;; <fv-rename> represents both a variable substitution and enough bookeeping to
+;; represent the copy of the old value to the new value.
+;;
 ;; FVCL structure:
 ;; <fvcl> ::= hash table #'equal: key is <free-var>, value is <fv-rename>
 ;;
@@ -1709,77 +1712,77 @@ insert the new-rename into FVCL."
           (fvcl-rename fv-c fvcl) (make-fv-rename :from fv-c :to cl-v))
     (fvcl-dump fvcl)))
 
-(defgeneric pass/closure-conversion (style vsubs node))
+(defgeneric pass/closure-conversion (style fvcl node))
 
-(defmethod pass/closure-conversion (style vsubs (self (eql nil)))
+(defmethod pass/closure-conversion (style fvcl (self (eql nil)))
   nil)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self toplevel))
-  (setf (body self) (pass/closure-conversion style vsubs (body self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self toplevel))
+  (setf (body self) (pass/closure-conversion style fvcl (body self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self body))
-  (setf (defs self) (pass/closure-conversion style vsubs (defs self)))
-  (setf (exprs self) (pass/closure-conversion style vsubs (exprs self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self body))
+  (setf (defs self) (pass/closure-conversion style fvcl (defs self)))
+  (setf (exprs self) (pass/closure-conversion style fvcl (exprs self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self defs))
-  (setf (def self) (pass/closure-conversion style vsubs (def self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self defs))
+  (setf (def self) (pass/closure-conversion style fvcl (def self)))
   (when (more self)
-    (setf (more self) (pass/closure-conversion style vsubs (more self))))
+    (setf (more self) (pass/closure-conversion style fvcl (more self))))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self def))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self def))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self exprs))
-  (setf (expr self) (pass/closure-conversion style vsubs (expr self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self exprs))
+  (setf (expr self) (pass/closure-conversion style fvcl (expr self)))
   (when (more self)
-    (setf (more self) (pass/closure-conversion style vsubs (more self))))
+    (setf (more self) (pass/closure-conversion style fvcl (more self))))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self vardecls))
-  (setf (vardecl self) (pass/closure-conversion style vsubs (vardecl self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self vardecls))
+  (setf (vardecl self) (pass/closure-conversion style fvcl (vardecl self)))
   (when (more self)
-    (setf (more self) (pass/closure-conversion style vsubs (more self))))
+    (setf (more self) (pass/closure-conversion style fvcl (more self))))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self vardecl))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self vardecl))
   ;; TODO: a vardecl can never change during closure conversion?
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self var))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self var))
   self)
 
 ;; all literals are just themselves.
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self literal))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self literal))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self prim))
-  (setf (op self) (pass/closure-conversion style vsubs (op self)))
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self prim))
+  (setf (op self) (pass/closure-conversion style fvcl (op self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self prim-unary))
-  (setf (op self) (pass/closure-conversion style vsubs (op self))
-        (arg0 self) (pass/closure-conversion style vsubs (arg0 self)))
+  (setf (op self) (pass/closure-conversion style fvcl (op self))
+        (arg0 self) (pass/closure-conversion style fvcl (arg0 self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self prim-binary))
-  (setf (op self) (pass/closure-conversion style vsubs (op self))
-        (arg0 self) (pass/closure-conversion style vsubs (arg0 self))
-        (arg1 self) (pass/closure-conversion style vsubs (arg1 self)))
+  (setf (op self) (pass/closure-conversion style fvcl (op self))
+        (arg0 self) (pass/closure-conversion style fvcl (arg0 self))
+        (arg1 self) (pass/closure-conversion style fvcl (arg1 self)))
   self)
 
 ;; TODO: This is fallow.
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self define-syntax))
-  (setf (vardecl self) (pass/closure-conversion style vsubs (vardecl self))
-        (value self) (pass/closure-conversion style vsubs (value self)))
+  (setf (vardecl self) (pass/closure-conversion style fvcl (vardecl self))
+        (value self) (pass/closure-conversion style fvcl (value self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self lambda-syntax))
   ;; TODO: this is where we convert lambda nodes into closure nodes and
   ;; recursively substitute the new closed variables into the body.  The
@@ -1842,42 +1845,45 @@ insert the new-rename into FVCL."
   ;; NOTE: It is probably the case that FVCL is the thing that I must curate
   ;; and pass down the recursion.
 
-
   ;; algorithm:
-
-  ;; LAMBDA-SYNTAX node:
-  ;; 1. Generate a new Cvar for each FVar
-  ;; 2. Looking at the FVCL passed in, find each FV then use the map passed in
-  ;; to generate a new map for this lambda node.
 
   ;; VAR node:
   ;; 1. if the id/syment match something in FVCL, perform a substitution.
 
+  ;; LAMBDA-SYNTAX node:
+  ;; 0. Copy the passed in FCVL table.
+  ;; 1. Generate a unique CVar for each FVar in the lambda-node.
+  ;; 2. Create syments for each CVar, insert into local :var scope for lambda.
+  ;; 3. Looking at the copied FVCL, find each FV this lambda-node uses
+  ;;    in the FCVL and then update the renames to include the rename from
+  ;;    the previous scope into this scope.
+  ;; 4. Recurse with the copied and updated FVCL on the body.
+
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self set!-syntax))
-  (setf (var self) (pass/closure-conversion style vsubs (var self))
-        (value self) (pass/closure-conversion style vsubs (value self)))
+  (setf (var self) (pass/closure-conversion style fvcl (var self))
+        (value self) (pass/closure-conversion style fvcl (value self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs (self if-syntax))
-  (setf (choice self) (pass/closure-conversion style vsubs (choice self))
-        (consequent self) (pass/closure-conversion style vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self if-syntax))
+  (setf (choice self) (pass/closure-conversion style fvcl (choice self))
+        (consequent self) (pass/closure-conversion style fvcl
                                                    (consequent self))
-        (alternate self) (pass/closure-conversion style vsubs
+        (alternate self) (pass/closure-conversion style fvcl
                                                   (alternate self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self begin-syntax))
-  (setf (body self) (pass/closure-conversion style vsubs (body self)))
+  (setf (body self) (pass/closure-conversion style fvcl (body self)))
   self)
 
-(defmethod pass/closure-conversion ((style (eql :flat)) vsubs
+(defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self application))
-  (setf (op self) (pass/closure-conversion style vsubs (op self))
-        (args self) (pass/closure-conversion style vsubs (args self)))
+  (setf (op self) (pass/closure-conversion style fvcl (op self))
+        (args self) (pass/closure-conversion style fvcl (args self)))
   self)
 
 ;; -----------------------------------------------------------------------
@@ -1901,7 +1907,34 @@ insert the new-rename into FVCL."
      ;; Convert LET, LETREC nodes to a lower level LAMBDA / APPLICATION forms
      ast (pass/desugar ast)
 
+     ;; Closure Analysis prolly should be split into at least these additional
+     ;; passes:
+     ;;
+     ;; 1. pass/closure-analysis
+     ;;    Compue which lambdas require what kind of closure features.
+     ;;    A) Full closure,
+     ;;    B) Partial closure & additional args.
+     ;;    C) Additional args only, no actual closure required.
+     ;;ast (pass/closure-analysis ast)
+     ;; 2. pass/closure-conversion
+     ;;    Close free vars into a representation agnostic representation
+     ;;    that primarily exists in the symbol table and VAR nodes.
+     ;;    TODO: We assume full closures for everything cause pass 1 isn't
+     ;;    done yet. We could prolly push the CLVar generation into
+     ;;    pass/closure-analysis and store it as an attribute on the lambda
+     ;;    node if we wanted to.
      ast (pass/closure-conversion :flat nil ast)
+     ;; 3. pass/closure-realization
+     ;;    Convert the agnostic representation into a concrete representation.
+     ;;    This will include altering the formals to include the closure
+     ;;    environment argument and how the closed variables are actually
+     ;;    referenced.
+     ;;ast (pass/closure-realization ast)
+     ;; 4. pass/closure-lifting (MAYBE)
+     ;;    Lift all newly closed functions into toplevel SET! forms.
+     ;;    TODO: Figure out if I need to lift the rest of the lambdas this way
+     ;;          too during this pass.
+     ;;ast (pass/closure-lifting ast)
 
      )
 
