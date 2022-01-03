@@ -167,21 +167,30 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
 (defmethod print-object ((obj syment) str)
   #++(call-next-method)
   (print-unreadable-object (obj str :type nil :identity t)
-    (format str
-            ;; Legend:
-            ;; g/G - not global / global
-            ;; m/M - not mutable / mutable
-            ;; u/U - not mutated / mutated
-            ;; p/P - not primitive / primitive
-            ;; s/S - not syntax / syntax
-            ;; b/B - not bound / bound
-            "SYM ~:[g~;G~]~:[m~;M~]~:[u~;U~]~:[s~;S~]~:[p~;P~]~:[b~;B~]"
-            (global-p obj)
-            (mutable-p obj)
-            (mutated-p obj)
-            (syntax-p obj)
-            (prim-p obj)
-            (bound-p obj))))
+    (cond
+      ((closed-p obj)
+       (format str
+               ;; Legend:
+               "SYM id:~A st:~(~S~) clsym:~A"
+               (closure-id obj)
+               (closure-style obj)
+               (closed-syment obj)))
+      (t
+       (format str
+               ;; Legend:
+               ;; g/G - not global / global
+               ;; m/M - not mutable / mutable
+               ;; u/U - not mutated / mutated
+               ;; p/P - not primitive / primitive
+               ;; s/S - not syntax / syntax
+               ;; b/B - not bound / bound
+               "SYM ~:[g~;G~]~:[m~;M~]~:[u~;U~]~:[s~;S~]~:[p~;P~]~:[b~;B~]"
+               (global-p obj)
+               (mutable-p obj)
+               (mutated-p obj)
+               (syntax-p obj)
+               (prim-p obj)
+               (bound-p obj))))))
 
 (defun make-syment/global (&key (bound-p nil))
   (make-syment :global-p t :mutable-p t
@@ -202,6 +211,12 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
   (make-syment :global-p t :mutable-p nil
                :mutated-p nil :syntax-p nil
                :prim-p t :bound-p t))
+
+(defun make-syment/closed (closure-id)
+  (make-syment :global-p nil :mutable-p nil
+               :mutated-p nil :syntax-p nil
+               :prim-p nil :bound-p t
+               :closed-p t :closure-id closure-id))
 
 ;; -----------------------------------------------------------------------
 ;; Tagged list handling
@@ -347,6 +362,8 @@ and default it to :any"
    (%value :accessor value :initarg :value :type expr)))
 (simple-constructor define-syntax vardecl value)
 
+;; After closure conversion, the semantics of the lambda-syntax
+;; changes such that it is always a close function.
 (defclass lambda-syntax (syntax free-vars binding-form)
   ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
    (%body :accessor body :initarg :body :type body)))
@@ -415,14 +432,6 @@ and default it to :any"
    (%more :accessor more :initarg :more :type closed-vars)))
 (simple-constructor closed-vars var more)
 
-;; A closed function: no free variables, possibly using a new closure record
-;; formal too. All references to any free variables have been rewritten into
-;; references out of the closure record.
-(defclass clambda (expr binding-form)
-  ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
-   (%body :accessor body :initarg :body :type body)))
-(simple-constructor clambda vardecls body symtab)
-
 (defclass closure (expr binding-form)
   ((%closed-vars :accessor closed-vars :initarg :closed-vars :type closed-vars)
    ;; An explicit description of the generated closure variable we're using to
@@ -430,7 +439,8 @@ and default it to :any"
    ;; symtab associated with this closure object (which of course contains a
    ;; symtab inside of it for each of the slots in the closure).
    (%cvar :accessor cvar :initarg :cvar :type var)
-   (%clambda :accessor clambda :initarg :clambda :type (or clambda var))))
+   ;; This will always be a closed lambda function.
+   (%clambda :accessor clambda :initarg :clambda :type lambda-syntax)))
 (simple-constructor closure closed-vars cvar clambda symtab)
 
 ;; -----------------------------------------------------------------------
@@ -1660,7 +1670,7 @@ item and defaults to IDENTITY."
     (make-fv-rename :from from-copy :to to-copy)))
 
 (defun make-fvcl ()
-  (make-hash-table :test #'equal))
+  (make-hash-table :test #'equalp))
 
 (defun fvcl-rename (fv-spec fvcl)
   "If there is a rename for fv-spec, return it, otherwise NIL."
@@ -1677,7 +1687,7 @@ insert the new-rename into FVCL."
 
 (defun fvcl-copy (fvcl)
   "Copy FVCL internal structure, but don't deep copy beyond that."
-  (let ((fvcl-copy (make-hash-table :test #'equal)))
+  (let ((fvcl-copy (make-fvcl)))
     (maphash (lambda (fv-spec rename)
                (setf (fvcl-rename (copy-var-spec fv-spec) fvcl-copy)
                      (copy-fv-rename rename)))
@@ -1702,6 +1712,7 @@ insert the new-rename into FVCL."
         (fv-a (make-var-spec :id 'a :syment 0))
         (fv-b (make-var-spec :id 'b :syment 1))
         (fv-c (make-var-spec :id 'c :syment 2))
+        (fv-cc (make-var-spec :id 'c :syment 2)) ; used to test lookups
         (cl-x (make-var-spec :id 'x :syment 3))
         (cl-y (make-var-spec :id 'y :syment 4))
         (cl-t (make-var-spec :id 't :syment 5))
@@ -1710,12 +1721,17 @@ insert the new-rename into FVCL."
     (setf (fvcl-rename fv-a fvcl) (make-fv-rename :from cl-x :to cl-t)
           (fvcl-rename fv-b fvcl) (make-fv-rename :from cl-y :to cl-u)
           (fvcl-rename fv-c fvcl) (make-fv-rename :from fv-c :to cl-v))
-    (fvcl-dump fvcl)))
+    (fvcl-dump fvcl)
+    (let ((looked-up-rename (fvcl-rename fv-cc fvcl)))
+      (logit "Looked up EQUAL rename was: ~A~%" looked-up-rename)
+      (assert looked-up-rename))
+    (logit "FVCL copy is:~%")
+    (fvcl-dump (fvcl-copy fvcl))))
 
 (defgeneric pass/closure-conversion (style fvcl node))
 
 (defmethod pass/closure-conversion (style fvcl (self (eql nil)))
-  nil)
+  self)
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self toplevel))
   (setf (body self) (pass/closure-conversion style fvcl (body self)))
@@ -1726,12 +1742,14 @@ insert the new-rename into FVCL."
   (setf (exprs self) (pass/closure-conversion style fvcl (exprs self)))
   self)
 
+;; TODO: This is fallow
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self defs))
   (setf (def self) (pass/closure-conversion style fvcl (def self)))
   (when (more self)
     (setf (more self) (pass/closure-conversion style fvcl (more self))))
   self)
 
+;; TODO: This is fallow
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self def))
   self)
 
@@ -1752,7 +1770,22 @@ insert the new-rename into FVCL."
   self)
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self var))
-  self)
+  ;; VAR node:
+  ;; 1. if the id/syment matches something in FVCL, perform the
+  ;; specified substitution of the FV to the closed "to" var.
+  (let* ((potential-fv-spec
+           (make-var-spec :id (id self) :syment (syment self)))
+         (rename (fvcl-rename potential-fv-spec fvcl)))
+    (if rename
+        (let* ((to (fv-rename-to rename))
+               (to-id (var-spec-id to))
+               (to-syment (var-spec-syment to)))
+          ;; Perform the substitution of the free variable to the closing
+          ;; "to" variable!
+          (make-var to-id to-syment))
+
+        ;; otherwise nothing to do here!
+        self)))
 
 ;; all literals are just themselves.
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl (self literal))
@@ -1830,11 +1863,12 @@ insert the new-rename into FVCL."
   ;;     FV:{a, b, c}, CL:{T, U, V}, FVCL:{a->[X=>T], b->[Y=>U], c->[c=>V]}
   ;;     (fx+ (fx+ a b) (fx+ c d))))))
   ;;
-  ;; Rewrite into closures. The {} represent copies which must be done into the
-  ;; closure environment before entering the lambda (which then has the closure
-  ;; env passed to it as an arg). In the {} it is FV:fromvar=>tocvar, which
-  ;; means "On behalf of FV, we copy 'fromvar' to 'tocvar' and 'tocvar' is the
-  ;; closed variable available in the lambda's body.
+  ;; Rewrite into closures. The {} represent the "evaluation of the closure
+  ;; argument" which must be done BEFORE entering the lambda body (which then
+  ;; has the closure env we just evaluated and set up passed to it as an
+  ;; arg). In the {} it is FV:fromvar=>tocvar, which means "On behalf of FV, we
+  ;; copy 'fromvar' to 'tocvar' and 'tocvar' is the closed variable available
+  ;; in the lambda's body".
   ;;
   ;; (closure {} (a)
   ;;  (closure {a:a=>Z} (b)
@@ -1842,22 +1876,72 @@ insert the new-rename into FVCL."
   ;;    (closure {a:X=>T, b:Y=>U, c:c=>V} (d)
   ;;     (fx+ (fx+ T U) (fx+ V d))))))
   ;;
-  ;; NOTE: It is probably the case that FVCL is the thing that I must curate
-  ;; and pass down the recursion.
+  ;; NOTE: The FVCL is curated to hold the free variable propogation
+  ;; information and passed down the AST recursion.
 
-  ;; algorithm:
-
-  ;; VAR node:
-  ;; 1. if the id/syment match something in FVCL, perform a substitution.
-
-  ;; LAMBDA-SYNTAX node:
+  ;; LAMBDA-SYNTAX node algorithm:
   ;; 0. Copy the passed in FCVL table.
-  ;; 1. Generate a unique CVar for each FVar in the lambda-node.
-  ;; 2. Create syments for each CVar, insert into local :var scope for lambda.
+  ;; 1. For each FVar in the lambda-node, generate a CLVar/syment pair
+  ;; 2. For each CLVar/syment, insert into local :var scope for lambda.
   ;; 3. Looking at the copied FVCL, find each FV this lambda-node uses
   ;;    in the FCVL and then update the renames to include the rename from
   ;;    the previous scope into this scope.
-  ;; 4. Recurse with the copied and updated FVCL on the body.
+  ;; 4. Recurse with the copied and updated FVCL into the body.
+
+  ;; 0 do copy
+  (flet ((make-clvar-id (id-symbol)
+           (gensym
+            (concatenate 'string "CLVAR-" (symbol-name id-symbol) "-"))))
+
+    (let ((fvcl-copy (fvcl-copy fvcl)))
+      (dolist (fv (free-vars self))
+        (destructuring-bind (fv . fv-syment) fv
+          ;; 1. generate the new CLVar/syment pair for this FV
+          (let ((clvar-id (make-clvar-id fv))
+                ;; TODO: Pick a better closure-id, it is ok for now since there
+                ;; is currently only one closure-id per lambda symtab scope
+                ;; and we can reuse this id for other scopes.
+                (clvar-syment (make-syment/closed 0)))
+
+            ;; Link the FV syment to the new closed syment.
+            ;; TODO: Prolly should do more here for things like mutability.
+            ;; Figure it out: how much do I lift to the closed syment?
+            (setf (closed-syment clvar-syment) fv-syment)
+
+            ;; 2. augment the lambda local symtab with the new clvar.
+            (st:insert-symbol (symtab self) clvar-id clvar-syment)
+
+            ;; 3. Finally update the copied FVCL with the required rename.
+            ;; If the fv isn't already in the FVCL, then it means the FV
+            ;; exists (or was defined) in the previous scope
+            ;; and we'll use it directly as the 'from' in
+            ;; the rename with the 'to' being the new clvar.
+            (let* ((fv-spec (make-var-spec :id fv :syment fv-syment))
+                   (current-rename (fvcl-rename fv-spec fvcl-copy))
+                   (to (make-var-spec :id clvar-id :syment clvar-syment))
+                   (new-rename (make-fv-rename
+                                :from (if current-rename
+                                          (fv-rename-to current-rename)
+                                          fv-spec)
+                                :to to)))
+              (setf (fvcl-rename fv-spec fvcl-copy) new-rename))
+            )))
+
+      ;; Then recurse into the children performing the substitutions and
+      ;; other work for future closures deeper in the lexical structure...
+
+      (setf (vardecls self)
+            (pass/closure-conversion style fvcl-copy (vardecls self)))
+
+      (setf (body self) (pass/closure-conversion style fvcl-copy (body self)))
+      ))
+
+  ;; TODO: Make this return a CLOSURE node since we've converted the lambda
+  ;; into a closure. There is a semantics change in that all lambda-syntax
+  ;; node are now closed.
+  ;;
+  ;; TODO: Prolly make the FVCL-copy info into a pure AST construct in the
+  ;; CLOSURE object to keep everything in the AST properly.
 
   self)
 
@@ -1923,7 +2007,7 @@ insert the new-rename into FVCL."
      ;;    done yet. We could prolly push the CLVar generation into
      ;;    pass/closure-analysis and store it as an attribute on the lambda
      ;;    node if we wanted to.
-     ast (pass/closure-conversion :flat nil ast)
+     ast (pass/closure-conversion :flat (make-fvcl) ast)
      ;; 3. pass/closure-realization
      ;;    Convert the agnostic representation into a concrete representation.
      ;;    This will include altering the formals to include the closure
