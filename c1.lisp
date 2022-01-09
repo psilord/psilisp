@@ -423,25 +423,40 @@ and default it to :any"
 
 ;;---- closure conversion augmentation of the above IR
 
-;; TODO: This stuff is not at all done yet.
-
 ;; Variables known to be free that must be closed over.  Specifically, this
-;; means their value (think tagged pointer) has been copied only.
+;; means their value (think tagged pointer) has been copied only. All variables
+;; are in the symbol table(s) and record additional knowledge there about
+;; membership to the ultimate closure structure. This AST representation of
+;; closures do not concretize the actual machine representation of the closure!
+(defclass closed-var (ast)
+  (;; The original free var reference which is being captured.
+   (%free :accessor free :initarg :free :type var)
+   ;; Outside of the lambda, this is the var that is the source of the value
+   ;; for the free var.
+   (%from :accessor from :initarg :from :type var)
+   ;; Inside the lambda, this is the var that was substituted in the place of
+   ;; the free var and is the actual closed var in the lambda.
+   (%to :accessor to :initarg :to :type var)))
+(simple-constructor closed-var free from to)
+
 (defclass closed-vars (ast seq)
-  ((%var :accessor var :initarg :var :type var)
+  ((%cvar :accessor cvar :initarg :cvar :type closed-var)
    (%more :accessor more :initarg :more :type closed-vars)))
-(simple-constructor closed-vars var more)
+(simple-constructor closed-vars cvar more)
 
 (defclass closure (expr binding-form)
-  ((%closed-vars :accessor closed-vars :initarg :closed-vars :type closed-vars)
-   ;; An explicit description of the generated closure variable we're using to
-   ;; represent the closure environment. It will be the only variable in the
-   ;; symtab associated with this closure object (which of course contains a
-   ;; symtab inside of it for each of the slots in the closure).
-   (%cvar :accessor cvar :initarg :cvar :type var)
-   ;; This will always be a closed lambda function.
-   (%clambda :accessor clambda :initarg :clambda :type lambda-syntax)))
-(simple-constructor closure closed-vars cvar clambda symtab)
+  (;; An explicit description of the generated closure variables we're using to
+   ;; represent the closure environment. Each closed-var held in this sequence
+   ;; describes exactly the provenance and (through the symbol table) copy
+   ;; and access semantics for each variable. The closed-vars becomes a
+   ;; sequence of set! forms before the construction of the closure.
+   (%closed-vars :accessor closed-vars :initarg :closed-vars :type closed-vars)
+   ;; This will always be a closed lambda function. It contains a symbol
+   ;; table that includes the formals and the 'to' variables in the
+   ;; closed vars.
+   (%clambda :accessor clambda :initarg :clambda
+             :type (or lambda-syntax var))))
+(simple-constructor closure closed-vars clambda symtab)
 
 ;; -----------------------------------------------------------------------
 ;; Utils
@@ -655,6 +670,29 @@ item and defaults to IDENTITY."
     (unparse style indent (args self)))
   (logit ")"))
 
+(defmethod unparse ((style (eql :psilisp)) indent (self closed-var))
+  (logit "(")
+  (unparse style indent (free self))
+  (logit " (")
+  (unparse style indent (from self))
+  (logit " -> ")
+  (unparse style indent (to self))
+  (logit "))"))
+
+(defmethod unparse ((style (eql :psilisp)) indent (self closed-vars))
+  (unparse style indent (cvar self))
+  (when (more self)
+    (logit " ")
+    (unparse style indent (more self))))
+
+(defmethod unparse ((style (eql :psilisp)) indent (self closure))
+  (logit "(CLOSURE (")
+  (unparse style indent (closed-vars self))
+  (logit ") ")
+  (unparse style indent (clambda self))
+  )
+
+
 ;; ---------
 ;; Unparse style: :ast
 ;; ---------
@@ -732,7 +770,8 @@ item and defaults to IDENTITY."
 
 (defmethod unparse ((style (eql :ast)) indent (self lambda-syntax))
   (logiti indent "; ~A~%" self)
-  (logiti indent "; FV: ~A~%" (free-vars self))
+  (when (free-vars self)
+    (logiti indent "; FV: ~A~%" (free-vars self)))
   (unparse style (+ indent 2) (vardecls self))
   (unparse style (1+ indent) (body self)))
 
@@ -797,7 +836,24 @@ item and defaults to IDENTITY."
     (logiti indent "; ARGS~%")
     (unparse style (1+ indent) (args self))))
 
+(defmethod unparse ((style (eql :ast)) indent (self closed-var))
+  (logiti indent "; ~A~%" self)
+  (logiti indent "; FREE VAR~%")
+  (unparse style (1+ indent) (free self))
+  (logiti indent "; FROM VAR~%")
+  (unparse style (1+ indent) (from self))
+  (logiti indent "; TO VAR~%")
+  (unparse style (1+ indent) (to self)))
 
+(defmethod unparse ((style (eql :ast)) indent (self closed-vars))
+  (logiti indent "; ~A~%" self)
+  (unparse style (1+ indent) (cvar self))
+  (unparse style indent (more self)))
+
+(defmethod unparse ((style (eql :ast)) indent (self closure))
+  (logiti indent "; ~A~%" self)
+  (unparse style (1+ indent) (closed-vars self))
+  (unparse style (1+ indent) (clambda self)))
 
 
 ;; -----------------------------------------------------------------------
@@ -1504,9 +1560,10 @@ item and defaults to IDENTITY."
 
 (defun collect-free-variables (&rest forms)
   (when forms
-    (reduce #'fv-union (mapcar (lambda (f)
-                                 (nth-value 1 (pass/free-variables f)))
-                               forms))))
+    (reduce #'fv-union
+            (mapcar (lambda (f)
+                      (nth-value 1 (pass/free-variables f)))
+                    forms))))
 
 ;; Returns ast node as first value, and free variables at that node as second
 ;; value.
@@ -1526,8 +1583,9 @@ item and defaults to IDENTITY."
     (seq-iter self
               (lambda (s)
                 (setf free-vars
-                      (union free-vars
-                             (nth-value 1 (pass/free-variables (expr s)))))))
+                      (fv-union free-vars
+                                (nth-value 1 (pass/free-variables
+                                              (expr s)))))))
     (values self free-vars)))
 
 (defmethod pass/free-variables ((self literal))
@@ -1536,10 +1594,9 @@ item and defaults to IDENTITY."
 (defmethod pass/free-variables ((self var))
   (let* ((sym (syment self))
          (fv (unless (or (prim-p sym) (global-p sym))
-               ;; TODO: Since I'm not sure entirely what to return here yet
-               ;; (which will be figured out during closure conversion), return
-               ;; a cons of the varname and the syment for it. That should be
-               ;; plenty useful for now.
+               ;; TODO: Make this just return self. However, I have to
+               ;; fix the uses of these quantities to deal with the new
+               ;; representation.
                (list (cons (id self) sym)))))
     (values self fv)))
 
@@ -1893,11 +1950,12 @@ insert the new-rename into FVCL."
            (gensym
             (concatenate 'string "CLVAR-" (symbol-name id-symbol) "-"))))
 
-    (let ((fvcl-copy (fvcl-copy fvcl)))
+    (let ((fvcl-copy (fvcl-copy fvcl))
+          (closed-vars nil))
       (dolist (fv (free-vars self))
-        (destructuring-bind (fv . fv-syment) fv
+        (destructuring-bind (fv-id . fv-syment) fv
           ;; 1. generate the new CLVar/syment pair for this FV
-          (let ((clvar-id (make-clvar-id fv))
+          (let ((clvar-id (make-clvar-id fv-id))
                 ;; TODO: Pick a better closure-id, it is ok for now since there
                 ;; is currently only one closure-id per lambda symtab scope
                 ;; and we can reuse this id for other scopes.
@@ -1916,34 +1974,54 @@ insert the new-rename into FVCL."
             ;; exists (or was defined) in the previous scope
             ;; and we'll use it directly as the 'from' in
             ;; the rename with the 'to' being the new clvar.
-            (let* ((fv-spec (make-var-spec :id fv :syment fv-syment))
+            (let* ((fv-spec (make-var-spec :id fv-id :syment fv-syment))
                    (current-rename (fvcl-rename fv-spec fvcl-copy))
                    (to (make-var-spec :id clvar-id :syment clvar-syment))
+                   (from (if current-rename
+                             (fv-rename-to current-rename)
+                             fv-spec))
                    (new-rename (make-fv-rename
-                                :from (if current-rename
-                                          (fv-rename-to current-rename)
-                                          fv-spec)
+                                :from from
                                 :to to)))
-              (setf (fvcl-rename fv-spec fvcl-copy) new-rename))
+              (setf (fvcl-rename fv-spec fvcl-copy) new-rename)
+
+              ;; 4. record the FVCL variable closing info for the AST closure
+              ;; node.
+              ;; TODO: A little clunky dataflow...
+              (setf closed-vars
+                    (make-closed-vars
+                     (make-closed-var
+                      (make-var fv-id fv-syment)
+                      (make-var (var-spec-id from)
+                                (var-spec-syment from))
+                      (make-var (var-spec-id to)
+                                (var-spec-syment to)))
+                     closed-vars)))
             )))
 
       ;; Then recurse into the children performing the substitutions and
       ;; other work for future closures deeper in the lexical structure...
 
+      ;; NOTE: We do not yet adjust the formals to include the closure
+      ;; environment, because we don't yet know the concrete form it'll take.
       (setf (vardecls self)
             (pass/closure-conversion style fvcl-copy (vardecls self)))
 
       (setf (body self) (pass/closure-conversion style fvcl-copy (body self)))
-      ))
 
-  ;; TODO: Make this return a CLOSURE node since we've converted the lambda
-  ;; into a closure. There is a semantics change in that all lambda-syntax
-  ;; node are now closed.
-  ;;
-  ;; TODO: Prolly make the FVCL-copy info into a pure AST construct in the
-  ;; CLOSURE object to keep everything in the AST properly.
+      ;; We have no more free vars for this newly closed lambda function.
+      ;; This knowledge is now held in the closed-vars slot in the closure.
+      (setf (free-vars self) nil)
 
-  self)
+      ;; TODO: Make this return a CLOSURE node since we've converted the lambda
+      ;; into a closure and an associated closed lambda function. There is a
+      ;; semantics change in that all lambda-syntax node are now closed.
+      ;;
+      ;; NOTE: AFTER lambda arguments are evaluated, THEN closure arguments are
+      ;; bound, THEN things are bound to the lambda variables and the body is
+      ;; called.
+
+      (make-closure closed-vars self (symtab self)))))
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self set!-syntax))
@@ -1992,7 +2070,8 @@ insert the new-rename into FVCL."
      ast (pass/desugar ast)
 
      ;; Closure Analysis prolly should be split into at least these additional
-     ;; passes:
+     ;; passes. Not all of these passes would necessarily be here or in this
+     ;; exact order.
      ;;
      ;; 1. pass/closure-analysis
      ;;    Compue which lambdas require what kind of closure features.
