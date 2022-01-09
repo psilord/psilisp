@@ -267,9 +267,7 @@ and default it to :any"
 
 ;; mixin to represent free variables
 (defclass free-vars ()
-  ;; a list of free vars (currently a simple list of conses of symbol names
-  ;; and syment entries).
-  ;; TODO: Spruce this up to be more formal in the AST.
+  ;; a list of free var instances
   ((%free-vars :accessor free-vars :initarg :free-vars :initform nil)))
 
 ;; mixin for anything that is also a binding form and causes a symbol table
@@ -315,15 +313,18 @@ and default it to :any"
   ((%var :accessor var :initarg :var :type var)))
 (simple-constructor vardecl var)
 
-;; TODO: For closure conversion, add in a "field" slot which indicates which
-;; field we're referencing in a closure record held in id/syment. This is a
-;; naive way to do this it seems, but doesn't seem TOO terrible. I'm trying to
-;; force the closure knowledge into the symbol table as opposed to AST nodes
-;; representing explicit accessors since those are harder to reason about.
 (defclass var (expr)
   ((%id :accessor id :initarg :id :type symbol)
    (%syment :accessor syment :initarg :syment :type syment)))
 (simple-constructor var id syment)
+
+;; Equality testing for var since two different var instances might actually
+;; be talking about the same semantic id->syment binding which makes them the
+;; same var.
+(defun var= (v0 v1)
+  (or (eq v0 v1)
+      (and (eq (id v0) (id v1))
+           (eq (syment v0) (syment v1)))))
 
 (defclass literal (expr) ())
 
@@ -771,7 +772,9 @@ item and defaults to IDENTITY."
 (defmethod unparse ((style (eql :ast)) indent (self lambda-syntax))
   (logiti indent "; ~A~%" self)
   (when (free-vars self)
-    (logiti indent "; FV: ~A~%" (free-vars self)))
+    (logiti indent "; FREE-VARS:~%")
+    (dolist (fv (free-vars self))
+      (unparse style indent fv)))
   (unparse style (+ indent 2) (vardecls self))
   (unparse style (1+ indent) (body self)))
 
@@ -1548,15 +1551,17 @@ item and defaults to IDENTITY."
 ;; into the nodes of: LAMBDA-SYNTAX, LET-SYNTAX, LETREC-SYNTAX
 ;; -----------------------------------------------------------------------
 
+
+
 ;; TODO: Put these utilities somewhere.
 (defun fv-union (l1 l2)
-  (union l1 l2 :test #'equal))
+  (union l1 l2 :test #'var=))
 
 (defun fv-set-difference (l1 l2)
-  (set-difference l1 l2 :test #'equal))
+  (set-difference l1 l2 :test #'var=))
 
 (defun fv-intersection (l1 l2)
-  (intersection l1 l2 :test #'equal))
+  (intersection l1 l2 :test #'var=))
 
 (defun collect-free-variables (&rest forms)
   (when forms
@@ -1594,10 +1599,8 @@ item and defaults to IDENTITY."
 (defmethod pass/free-variables ((self var))
   (let* ((sym (syment self))
          (fv (unless (or (prim-p sym) (global-p sym))
-               ;; TODO: Make this just return self. However, I have to
-               ;; fix the uses of these quantities to deal with the new
-               ;; representation.
-               (list (cons (id self) sym)))))
+               ;; consider ourself free
+               (list self))))
     (values self fv)))
 
 (defmethod pass/free-variables ((self prim))
@@ -1953,7 +1956,8 @@ insert the new-rename into FVCL."
     (let ((fvcl-copy (fvcl-copy fvcl))
           (closed-vars nil))
       (dolist (fv (free-vars self))
-        (destructuring-bind (fv-id . fv-syment) fv
+        (let ((fv-id (id fv))
+              (fv-syment (syment fv)))
           ;; 1. generate the new CLVar/syment pair for this FV
           (let ((clvar-id (make-clvar-id fv-id))
                 ;; TODO: Pick a better closure-id, it is ok for now since there
@@ -2105,7 +2109,6 @@ insert the new-rename into FVCL."
 
     (logit "Free variables at toplevel: ~A~%" toplevel-freevars)
     (dolist (fv toplevel-freevars)
-      (destructuring-bind (id . syment) fv
-        (logit "Id: ~A -> ~A~%" id syment)))
+      (logit "Id: ~A -> ~A~%" (id fv) (syment fv)))
 
     ast))
