@@ -2108,6 +2108,6 @@ insert the new-rename into FVCL."
 
     (logit "Free variables at toplevel: ~A~%" toplevel-freevars)
     (dolist (fv toplevel-freevars)
-      (logit "Id: ~A -> ~A~%" (id fv) (syment fv)))
+      (logiti 1 "Id: ~A -> ~A~%" (id fv) (syment fv)))
 
     ast))
