@@ -841,12 +841,12 @@ item and defaults to IDENTITY."
 
 (defmethod unparse ((style (eql :ast)) indent (self closed-var))
   (logiti indent "; ~A~%" self)
-  (logiti indent "; FREE VAR~%")
-  (unparse style (1+ indent) (free self))
-  (logiti indent "; FROM VAR~%")
-  (unparse style (1+ indent) (from self))
-  (logiti indent "; TO VAR~%")
-  (unparse style (1+ indent) (to self)))
+  (logiti (1+ indent) "; FREE ")
+  (unparse style 0 (free self))
+  (logiti (1+ indent) "; FROM ")
+  (unparse style 0 (from self))
+  (logiti (1+ indent) "; TO   ")
+  (unparse style 0 (to self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self closed-vars))
   (logiti indent "; ~A~%" self)
@@ -1877,10 +1877,10 @@ insert the new-rename into FVCL."
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self lambda-syntax))
-  ;; TODO: this is where we convert lambda nodes into closure nodes and
-  ;; recursively substitute the new closed variables into the body.  The
-  ;; closure representation is not specified here and left ambiguous for later
-  ;; passes to concretize.
+  ;; This is where we convert lambda nodes into closure nodes and recursively
+  ;; substitute the new closed variables into the body.  The closure
+  ;; representation is not specified here and left ambiguous for later passes
+  ;; to concretize.
   ;;
   ;; fields: vardecls, body, symtab
 
@@ -1991,11 +1991,10 @@ insert the new-rename into FVCL."
 
               ;; 4. record the FVCL variable closing info for the AST closure
               ;; node.
-              ;; TODO: A little clunky dataflow...
               (setf closed-vars
                     (make-closed-vars
                      (make-closed-var
-                      (make-var fv-id fv-syment)
+                      fv
                       (make-var (var-spec-id from)
                                 (var-spec-syment from))
                       (make-var (var-spec-id to)
@@ -2007,7 +2006,8 @@ insert the new-rename into FVCL."
       ;; other work for future closures deeper in the lexical structure...
 
       ;; NOTE: We do not yet adjust the formals to include the closure
-      ;; environment, because we don't yet know the concrete form it'll take.
+      ;; environment, because we don't yet know the concrete form the closure
+      ;; will take.
       (setf (vardecls self)
             (pass/closure-conversion style fvcl-copy (vardecls self)))
 
@@ -2017,9 +2017,8 @@ insert the new-rename into FVCL."
       ;; This knowledge is now held in the closed-vars slot in the closure.
       (setf (free-vars self) nil)
 
-      ;; TODO: Make this return a CLOSURE node since we've converted the lambda
-      ;; into a closure and an associated closed lambda function. There is a
-      ;; semantics change in that all lambda-syntax node are now closed.
+      ;; NOTE: There is a semantics change in that all lambda-syntax node are
+      ;; now closed.
       ;;
       ;; NOTE: AFTER lambda arguments are evaluated, THEN closure arguments are
       ;; bound, THEN things are bound to the lambda variables and the body is
