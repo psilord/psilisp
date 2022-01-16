@@ -129,35 +129,27 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
    ;; variable reference.
    (%bound-p :accessor bound-p :initarg :bound-p :initform nil)
 
-   ;; Squishy stuff below. Type/Kind handling is not implemented and
-   ;; is all kinds of crappily implemented with predicates.
+   ;; A closure environment is represented by a single variable in a lambda
+   ;; function's argdecls which points to a syment in the lambda's symbol table
+   ;; entry in the scope of (but no higher and no lower). This syment is
+   ;; closure-p and specifies a closure-id. The closure-id represents a
+   ;; membership number that all closed vars must specify if they are to be a
+   ;; part of the closure environment.
    ;;
-   ;; Closed variables use syments which are closed-p T and have a closure-id
-   ;; of an integer. All variables in the _same_ scope with closire-id of
-   ;; an integer are grouped by that integer into a closure. The actual
-   ;; representation of the closure object is left to other parts of the
-   ;; compiler. This makes closed variables simply unique entries in the
-   ;; current scope symtab that can be gathered together later.
-
-   ;; Does this syment represent a closed variable?
-   ;; It is used for syments of individual field variables in a closure.
+   ;; A closed variable specifies closed-p, the closure-id of the closure
+   ;; environment that is a member of, and a reference to the syment over which
+   ;; it has closed. It also specifies closure-style which indicates if it is
+   ;; directly in the closure environment representation, or if it could be
+   ;; instead passed in as an argument at the place of call.
+   (%closure-p :accessor closure-p :initarg :closure-p :initform nil)
    (%closed-p :accessor closed-p :initarg :closed-p :initform nil)
-   ;; This indicates of the closed var is actually stored in an allocated
-   ;; closure object, or can be passed in as an extra argument to the function.
-   ;; Analysis of the closure indicates which one might be possible.  A
-   ;; conservative default is ALL of them could be :alloc, but this can cause
-   ;; memory churn. In certin situations, we don't need to actually alloc space
-   ;; and can just pass it as an argument if we know the function is never used
-   ;; as data.
-   ;;
-   ;; The valid values are: :alloc, :argument.
-   (%closure-style :accessor closure-style :initarg :closure-style
-                   :initform :alloc)
-   ;; Which closure grouping is this closed variable a part of?
    (%closure-id :accessor closure-id :initarg :closure-id :initform nil)
+   ;; The valid values are: :member, :arg.
+   (%closure-style :accessor closure-style :initarg :closure-style
+                   :initform :member)
    ;; A reference to the free variable syment which was closed over.
    ;; From that, one can deduce mutable cells and other important things for
-   ;; accessing the closed variable.
+   ;; accessing the closed variable (like if was mutable, etc, etc)
    (%closed-syment :accessor closed-syment :initarg :closed-syment
                    :initform nil)
    ))
@@ -168,23 +160,32 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
   #++(call-next-method)
   (print-unreadable-object (obj str :type nil :identity t)
     (cond
+      ((closure-p obj)
+       (format str
+               ;; Legend:
+               ;; E - closure environment var
+               "SYM E ~A"
+               (closure-id obj)))
+
       ((closed-p obj)
        (format str
                ;; Legend:
-               "SYM id:~A st:~(~S~) clsym:~A"
+               ;; C - closed var
+               "SYM C ~A ~(~S~) ~A"
                (closure-id obj)
                (closure-style obj)
                (closed-syment obj)))
       (t
        (format str
                ;; Legend:
+               ;; V - var
                ;; g/G - not global / global
                ;; m/M - not mutable / mutable
                ;; u/U - not mutated / mutated
                ;; p/P - not primitive / primitive
                ;; s/S - not syntax / syntax
                ;; b/B - not bound / bound
-               "SYM ~:[g~;G~]~:[m~;M~]~:[u~;U~]~:[s~;S~]~:[p~;P~]~:[b~;B~]"
+               "SYM V~:[g~;G~]~:[m~;M~]~:[u~;U~]~:[s~;S~]~:[p~;P~]~:[b~;B~]"
                (global-p obj)
                (mutable-p obj)
                (mutated-p obj)
@@ -216,7 +217,15 @@ initargs for the class are named the same as those supplied in INIT-ARGS."
   (make-syment :global-p nil :mutable-p nil
                :mutated-p nil :syntax-p nil
                :prim-p nil :bound-p t
-               :closed-p t :closure-id closure-id))
+               :closure-p nil :closed-p t
+               :closure-id closure-id))
+
+(defun make-syment/closure (closure-id)
+  (make-syment :global-p nil :mutable-p nil
+               :mutated-p nil :syntax-p nil
+               :prim-p nil :bound-p t
+               :closure-p t :closed-p nil
+               :closure-id closure-id))
 
 ;; -----------------------------------------------------------------------
 ;; Tagged list handling
@@ -446,7 +455,13 @@ and default it to :any"
 (simple-constructor closed-vars cvar more)
 
 (defclass closure (expr binding-form)
-  (;; An explicit description of the generated closure variables we're using to
+  (;; A VAR of the closure environment variable we inserted into the symtab
+   ;; on behalf of the function we closed. We canonically put it here in the
+   ;; first closure pass. Later passes might remove it totally or modify it
+   ;; in other ways.
+   (%closure-env-var :accessor closure-env-var :initarg :closure-env-var
+                     :type var)
+   ;; An explicit description of the generated closure variables we're using to
    ;; represent the closure environment. Each closed-var held in this sequence
    ;; describes exactly the provenance and (through the symbol table) copy
    ;; and access semantics for each variable. The closed-vars becomes a
@@ -457,7 +472,7 @@ and default it to :any"
    ;; closed vars.
    (%clambda :accessor clambda :initarg :clambda
              :type (or lambda-syntax var))))
-(simple-constructor closure closed-vars clambda symtab)
+(simple-constructor closure closure-env-var closed-vars clambda symtab)
 
 ;; -----------------------------------------------------------------------
 ;; Utils
@@ -687,7 +702,9 @@ item and defaults to IDENTITY."
     (unparse style indent (more self))))
 
 (defmethod unparse ((style (eql :psilisp)) indent (self closure))
-  (logit "(CLOSURE (")
+  (logit "(CLOSURE ")
+  (unparse style indent (closure-env-var self))
+  (logit " (")
   (unparse style indent (closed-vars self))
   (logit ") ")
   (unparse style indent (clambda self))
@@ -855,6 +872,10 @@ item and defaults to IDENTITY."
 
 (defmethod unparse ((style (eql :ast)) indent (self closure))
   (logiti indent "; ~A~%" self)
+  (logiti (1+ indent) "; CENV: ~A | ~A @ ~A~%"
+          (id (closure-env-var self))
+          (closure-env-var self)
+          (syment (closure-env-var self)))
   (unparse style (1+ indent) (closed-vars self))
   (unparse style (1+ indent) (clambda self)))
 
@@ -1877,15 +1898,15 @@ insert the new-rename into FVCL."
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self lambda-syntax))
-  ;; This is where we convert lambda nodes into closure nodes and recursively
-  ;; substitute the new closed variables into the body.  The closure
-  ;; representation is not specified here and left ambiguous for later passes
-  ;; to concretize.
-  ;;
-  ;; fields: vardecls, body, symtab
+  ;; This is where we canonicalize lambda nodes into closure nodes and
+  ;; recursively substitute the new closed variables into the body.  The
+  ;; closure representation is not specified here and left ambiguous for later
+  ;; passes to concretize. The semantic understanding of the closed variables
+  ;; and how they are part of the closure is held almost entirely in the symbol
+  ;; table after this call is done.
 
-  ;; I believe I need to pass a set of FREE-VAR -> CLOSED-VAR sub set
-  ;; to pass/closure-conversion so it replaces uses of free vars with closed
+  ;; I pass the FVCL set of FREE-VAR -> CLOSED-VAR sub set to
+  ;; pass/closure-conversion so it replaces uses of free vars with closed
   ;; versions as it performs its recursive work.
 
   ;; The FREE-VAR -> CLOSED-VAR set cannot be a side effecting storage, but
@@ -1946,15 +1967,26 @@ insert the new-rename into FVCL."
   ;; 3. Looking at the copied FVCL, find each FV this lambda-node uses
   ;;    in the FCVL and then update the renames to include the rename from
   ;;    the previous scope into this scope.
-  ;; 4. Recurse with the copied and updated FVCL into the body.
+  ;; 4. Record AST appropriate information about the info in this algorithm.
+  ;; 5. Recurse with the copied and updated FVCL into the body.
 
   ;; 0 do copy
   (flet ((make-clvar-id (id-symbol)
            (gensym
-            (concatenate 'string "CLVAR-" (symbol-name id-symbol) "-"))))
+            (concatenate 'string "CLV-" (symbol-name id-symbol) "-")))
+         (make-cevar-id (id-symbol)
+           (gensym
+            (concatenate 'string "CLE-" (symbol-name id-symbol) "-"))))
 
-    (let ((fvcl-copy (fvcl-copy fvcl))
-          (closed-vars nil))
+    (let* ((fvcl-copy (fvcl-copy fvcl))
+           (closed-vars nil)
+           ;; We also describe the cenv var and other closure environment stuff
+           ;; we're shoving into the symbol table.
+           (closure-id 0) ;; TODO: Can this ever be unique? Should it be?
+           (cenv-syment (make-syment/closure closure-id))
+           (cenv-var-id (make-cevar-id 'v))
+           (cenv-var (make-var cenv-var-id cenv-syment)))
+
       (dolist (fv (free-vars self))
         (let ((fv-id (id fv))
               (fv-syment (syment fv)))
@@ -1963,7 +1995,7 @@ insert the new-rename into FVCL."
                 ;; TODO: Pick a better closure-id, it is ok for now since there
                 ;; is currently only one closure-id per lambda symtab scope
                 ;; and we can reuse this id for other scopes.
-                (clvar-syment (make-syment/closed 0)))
+                (clvar-syment (make-syment/closed closure-id)))
 
             ;; Link the FV syment to the new closed syment.
             ;; TODO: Prolly should do more here for things like mutability.
@@ -2002,14 +2034,20 @@ insert the new-rename into FVCL."
                      closed-vars)))
             )))
 
-      ;; Then recurse into the children performing the substitutions and
-      ;; other work for future closures deeper in the lexical structure...
+      ;; Later passes will determine if the closure environment var actually
+      ;; needs to exist, what actual representation form it should take, and
+      ;; whatnot, and we add it to the symtab and argdecls unconditionally.
+      ;; Future passes in the compiler dictate the concrete representation of
+      ;; the closure environment.
+      (st:insert-symbol (symtab self) cenv-var-id cenv-syment)
 
-      ;; NOTE: We do not yet adjust the formals to include the closure
-      ;; environment, because we don't yet know the concrete form the closure
-      ;; will take.
+      ;; 5. Then recurse into the children performing the substitutions and
+      ;; other work for future closures deeper in the lexical structure...
       (setf (vardecls self)
-            (pass/closure-conversion style fvcl-copy (vardecls self)))
+            ;; and add the new closure env var in front or ardecls....
+            (make-vardecls
+             (make-vardecl cenv-var)
+             (pass/closure-conversion style fvcl-copy (vardecls self))))
 
       (setf (body self) (pass/closure-conversion style fvcl-copy (body self)))
 
@@ -2019,12 +2057,12 @@ insert the new-rename into FVCL."
 
       ;; NOTE: There is a semantics change in that all lambda-syntax node are
       ;; now closed.
-      ;;
-      ;; NOTE: AFTER lambda arguments are evaluated, THEN closure arguments are
-      ;; bound, THEN things are bound to the lambda variables and the body is
-      ;; called.
 
-      (make-closure closed-vars self (symtab self)))))
+      ;; NOTE FOR A DIFFERENT PASS: AFTER lambda arguments are evaluated, THEN
+      ;; closure arguments are bound, THEN things are bound to the lambda
+      ;; variables and the body is called.
+
+      (make-closure cenv-var closed-vars self (symtab self)))))
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self set!-syntax))
