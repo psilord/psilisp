@@ -2130,7 +2130,7 @@ insert the new-rename into FVCL."
      ;;;; Closure Relaxation: AST -> AST (OPTIONAL)
      ;;; Remove some pressure on the GC since some closure structures can be
      ;;; removed or made smaller by this pass.
-     ;; Compute which lambdas require what kind of closure features.
+     ;; Compute which closures actually require which features.
      ;; A) Full closure,
      ;; B) Partial closure & additional args.
      ;; C) Additional args only and/or no closed vars - no closure required!
