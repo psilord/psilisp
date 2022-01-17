@@ -2106,18 +2106,18 @@ insert the new-rename into FVCL."
      ;;; Produce a full AST of the original source.
      ast (pass/alphatization env top-forms)
 
-     ;;;; Free variable analysis. (REQUIRED)
+     ;;;; Free Variable Analysis: AST -> AST (REQUIRED)
      ;;; Compute a free variable set for LET, LETREC, and LAMBDA forms.
      ;; TODO: Prolly should push freevar analysis later to a lower-level
      ;; representation (after desugaring), but doing it here is useful for
      ;; debugging output & recording given the original source.
      (values ast toplevel-freevars) (pass/free-variables ast)
 
-     ;;;; Desugaring. (REQUIRED for now because no macros)
+     ;;;; Desugaring. AST -> AST (REQUIRED for now because no macros)
      ;;; Convert LET, LETREC nodes to a lower level LAMBDA / APPLICATION forms
      ast (pass/desugar ast)
 
-     ;;;; Closure conversion. (REQUIRED)
+     ;;;; Closure Conversion: AST -> AST (REQUIRED)
      ;;; Close free vars into a normalized, agnostic to representation, and
      ;;; full, closure environment representation that primarily exists
      ;;; in the symbol table and AST CLOSURE/LAMBDA  nodes.
@@ -2127,7 +2127,7 @@ insert the new-rename into FVCL."
      ;;;; Closure Analysis prolly have at least these additional passes. Not
      ;;;; all of these passes would necessarily be here or in this exact order.
 
-     ;;;; Closure relaxation (OPTIONAL)
+     ;;;; Closure Relaxation: AST -> AST (OPTIONAL)
      ;;; Remove some pressure on the GC since some closure structures can be
      ;;; removed or made smaller by this pass.
      ;; Compute which lambdas require what kind of closure features.
@@ -2136,7 +2136,7 @@ insert the new-rename into FVCL."
      ;; C) Additional args only and/or no closed vars - no closure required!
      ;;;ast (pass/closure-relaxation ast)
 
-     ;;;; Closure Realization (REQUIRED)
+     ;;;; Closure Realization: AST -> AST (REQUIRED)
      ;;; Convert the agnostic closure representation into a concrete closure
      ;;; representation.
      ;; This decides upon the representation of the closure environment and
@@ -2144,9 +2144,9 @@ insert the new-rename into FVCL."
      ;; closure environment.
      ;;;ast (pass/closure-realization ast)
 
-     ;;;; Closure Lambda Lifting (REQUIRED)
-     ;;; Lift all closure lambdas into toplevel SET! forms and replace with a
-     ;;; VAR that references it in the original place.
+     ;;;; Closure Lambda Lifting: AST -> AST (REQUIRED)
+     ;;; Lift all closure lambdas into toplevel SET! forms of global variables
+     ;;; and replace with a VAR that references it in the original place.
      ;;
      ;;;ast (pass/closure-lifting ast)
 
