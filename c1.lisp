@@ -2100,45 +2100,55 @@ insert the new-rename into FVCL."
 
     ;; Compiler passes.
     (setf
+
+     ;;;; Alphatization: original source -> AST (REQUIRED)
+     ;;; Perform name resolution on symbols.
+     ;;; Produce a full AST of the original source.
      ast (pass/alphatization env top-forms)
 
+     ;;;; Free variable analysis. (REQUIRED)
+     ;;; Compute a free variable set for LET, LETREC, and LAMBDA forms.
      ;; TODO: Prolly should push freevar analysis later to a lower-level
      ;; representation (after desugaring), but doing it here is useful for
      ;; debugging output & recording given the original source.
      (values ast toplevel-freevars) (pass/free-variables ast)
 
-     ;; Convert LET, LETREC nodes to a lower level LAMBDA / APPLICATION forms
+     ;;;; Desugaring. (REQUIRED for now because no macros)
+     ;;; Convert LET, LETREC nodes to a lower level LAMBDA / APPLICATION forms
      ast (pass/desugar ast)
 
-     ;; Closure Analysis prolly should be split into at least these additional
-     ;; passes. Not all of these passes would necessarily be here or in this
-     ;; exact order.
-     ;;
-     ;; 1. pass/closure-analysis
-     ;;    Compue which lambdas require what kind of closure features.
-     ;;    A) Full closure,
-     ;;    B) Partial closure & additional args.
-     ;;    C) Additional args only, no actual closure required.
-     ;;ast (pass/closure-analysis ast)
-     ;; 2. pass/closure-conversion
-     ;;    Close free vars into a representation agnostic representation
-     ;;    that primarily exists in the symbol table and VAR nodes.
-     ;;    TODO: We assume full closures for everything cause pass 1 isn't
-     ;;    done yet. We could prolly push the CLVar generation into
-     ;;    pass/closure-analysis and store it as an attribute on the lambda
-     ;;    node if we wanted to.
+     ;;;; Closure conversion. (REQUIRED)
+     ;;; Close free vars into a normalized, agnostic to representation, and
+     ;;; full, closure environment representation that primarily exists
+     ;;; in the symbol table and AST CLOSURE/LAMBDA  nodes.
+     ;; After this pass, all LAMBDA functions are closed.
      ast (pass/closure-conversion :flat (make-fvcl) ast)
-     ;; 3. pass/closure-realization
-     ;;    Convert the agnostic representation into a concrete representation.
-     ;;    This will include altering the formals to include the closure
-     ;;    environment argument and how the closed variables are actually
-     ;;    referenced.
-     ;;ast (pass/closure-realization ast)
-     ;; 4. pass/closure-lifting (MAYBE)
-     ;;    Lift all newly closed functions into toplevel SET! forms.
-     ;;    TODO: Figure out if I need to lift the rest of the lambdas this way
-     ;;          too during this pass.
-     ;;ast (pass/closure-lifting ast)
+
+     ;;;; Closure Analysis prolly have at least these additional passes. Not
+     ;;;; all of these passes would necessarily be here or in this exact order.
+
+     ;;;; Closure relaxation (OPTIONAL)
+     ;;; Remove some pressure on the GC since some closure structures can be
+     ;;; removed or made smaller by this pass.
+     ;; Compute which lambdas require what kind of closure features.
+     ;; A) Full closure,
+     ;; B) Partial closure & additional args.
+     ;; C) Additional args only and/or no closed vars - no closure required!
+     ;;;ast (pass/closure-relaxation ast)
+
+     ;;;; Closure Realization (REQUIRED)
+     ;;; Convert the agnostic closure representation into a concrete closure
+     ;;; representation.
+     ;; This decides upon the representation of the closure environment and
+     ;; the layout and placement of the closed variables references into that
+     ;; closure environment.
+     ;;;ast (pass/closure-realization ast)
+
+     ;;;; Closure Lambda Lifting (REQUIRED)
+     ;;; Lift all closure lambdas into toplevel SET! forms and replace with a
+     ;;; VAR that references it in the original place.
+     ;;
+     ;;;ast (pass/closure-lifting ast)
 
      )
 
