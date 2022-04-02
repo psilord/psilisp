@@ -433,6 +433,14 @@ and default it to :any"
 
 ;;---- closure conversion augmentation of the above IR
 
+;; All lambdas (which initially are functions that are either closed or not
+;; closed) are converted to clambdas when they are closed. So after the closure
+;; pass, there should be no more lambda-syntax AST nodes in the AST.
+(defclass clambda (expr binding-form)
+  ((%vardecls :accessor vardecls :initarg :vardecls :type vardecls)
+   (%body :accessor body :initarg :body :type body)))
+(simple-constructor clambda vardecls body symtab)
+
 ;; Variables known to be free that must be closed over.  Specifically, this
 ;; means their value (think tagged pointer) has been copied only. All variables
 ;; are in the symbol table(s) and record additional knowledge there about
@@ -471,7 +479,7 @@ and default it to :any"
    ;; table that includes the formals and the 'to' variables in the
    ;; closed vars.
    (%clambda :accessor clambda :initarg :clambda
-             :type (or lambda-syntax var))))
+             :type (or clambda var))))
 (simple-constructor closure closure-env-var closed-vars clambda symtab)
 
 ;; -----------------------------------------------------------------------
@@ -686,6 +694,13 @@ item and defaults to IDENTITY."
     (unparse style indent (args self)))
   (logit ")"))
 
+(defmethod unparse ((style (eql :psilisp)) indent (self clambda))
+  (logit "(CLAMBDA (")
+  (unparse style indent (vardecls self))
+  (logit ") ")
+  (unparse style indent (body self))
+  (logit ")"))
+
 (defmethod unparse ((style (eql :psilisp)) indent (self closed-var))
   (logit "(")
   (unparse style indent (free self))
@@ -855,6 +870,11 @@ item and defaults to IDENTITY."
   (when (args self)
     (logiti indent "; ARGS~%")
     (unparse style (1+ indent) (args self))))
+
+(defmethod unparse ((style (eql :ast)) indent (self clambda))
+  (logiti indent "; ~A~%" self)
+  (unparse style (+ indent 2) (vardecls self))
+  (unparse style (1+ indent) (body self)))
 
 (defmethod unparse ((style (eql :ast)) indent (self closed-var))
   (logiti indent "; ~A~%" self)
@@ -2042,27 +2062,31 @@ insert the new-rename into FVCL."
       (st:insert-symbol (symtab self) cenv-var-id cenv-syment)
 
       ;; 5. Then recurse into the children performing the substitutions and
-      ;; other work for future closures deeper in the lexical structure...
-      (setf (vardecls self)
-            ;; and add the new closure env var in front or ardecls....
-            (make-vardecls
-             (make-vardecl cenv-var)
-             (pass/closure-conversion style fvcl-copy (vardecls self))))
+      ;; other work for future closures deeper in the lexical structure.
+      ;;
+      ;; We take the results and produce a CLAMBDA object--a
+      ;; representation of the closed function and drop the reference to the
+      ;; original LAMBDA-SYNTAX.
+      (let ((clambda
+              (make-clambda
+               ;; and add the new closure env var in front or ardecls....
+               (make-vardecls
+                (make-vardecl cenv-var)
+                (pass/closure-conversion style fvcl-copy (vardecls self)))
+               (pass/closure-conversion style fvcl-copy (body self))
+               (symtab self))))
 
-      (setf (body self) (pass/closure-conversion style fvcl-copy (body self)))
+        ;; We have no more free vars for this newly closed lambda function.
+        ;; This knowledge is now held in the closed-vars slot in the closure.
+        ;; But we clean up the original lambda-syntax node even though we
+        ;; drop the reference to it.
+        (setf (free-vars self) nil)
 
-      ;; We have no more free vars for this newly closed lambda function.
-      ;; This knowledge is now held in the closed-vars slot in the closure.
-      (setf (free-vars self) nil)
+        ;; NOTE FOR A DIFFERENT PASS: AFTER lambda arguments are evaluated,
+        ;; THEN closure arguments are bound, THEN things are bound to the
+        ;; lambda variables and the body is called.
 
-      ;; NOTE: There is a semantics change in that all lambda-syntax node are
-      ;; now closed.
-
-      ;; NOTE FOR A DIFFERENT PASS: AFTER lambda arguments are evaluated, THEN
-      ;; closure arguments are bound, THEN things are bound to the lambda
-      ;; variables and the body is called.
-
-      (make-closure cenv-var closed-vars self (symtab self)))))
+        (make-closure cenv-var closed-vars clambda (symtab self))))))
 
 (defmethod pass/closure-conversion ((style (eql :flat)) fvcl
                                     (self set!-syntax))
