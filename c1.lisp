@@ -2080,6 +2080,10 @@ insert the new-rename into FVCL."
         ;; This knowledge is now held in the closed-vars slot in the closure.
         ;; But we clean up the original lambda-syntax node even though we
         ;; drop the reference to it.
+	;;
+	;; TODO: Maybe we shouldn't drop this here so we can keep a chain of
+	;; mutations for debugging purpoess. Revisit this when the language is
+	;; stable enough that we can add in debugging information.
         (setf (free-vars self) nil)
 
         ;; NOTE FOR A DIFFERENT PASS: AFTER lambda arguments are evaluated,
