@@ -120,7 +120,8 @@ invoke_funinst_0:
 
 	# First, get the pointer to the function...
 	movq	%rdi, %r10
-	andq	$0xfffffffffffffff0, %r10
+	movq	$0xfffffffffffffff0, %r11
+	andq	%r11, %r10
 
 	call	*%r10
 
@@ -128,7 +129,7 @@ invoke_funinst_0:
 	ret
 
 .Lifi0_bad_funinst:
-	movq	$0xffffffffffffffff, %rax
+	movq	$0x11223344AABBCCD0, %rax
 	leave
 	ret
 
@@ -151,7 +152,8 @@ invoke_funinst_1:
 
 	# First, get the pointer to the function...
 	movq	%rdi, %r10
-	andq	$0xfffffffffffffff0, %r10
+	movq	$0xfffffffffffffff0, %r11
+	andq	%r11, %r10
 
 	# Then construct arg0 for the function.
 	# Shift arg1 for the invoker to be arg0 for the callee
@@ -163,6 +165,6 @@ invoke_funinst_1:
 	ret
 
 .Lifi1_bad_funinst:
-	movq	$0xffffffffffffffff, %rax
+	movq	$0x11223344AABBCCD1, %rax
 	leave
 	ret
