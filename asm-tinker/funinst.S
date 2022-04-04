@@ -1,5 +1,18 @@
+
+	.data
+    .globl addr_mask
+	addr_mask: .quad 0xfffffffffffffff0
+
+    .globl bad_value
+	bad_value: .quad 0x11223344aabbccdd
+
+
+
     .text                               
-	.equ tagval_funinst, 0x0d
+	.equ tagval_funinst, 0b1101
+	.equ tagval_funinst_mask, 0b1111
+	.equ tagval_funinst_fun, 0b1101
+	.equ tagval_funinst_closure, 0b1111
 
 	###############################################################
 	# C arg passing convention
@@ -85,23 +98,40 @@ funinst_fun_1:
 
 	# ----------------------------------------------------------------------
 
+	#########################################################
+	# A funinst of a closure taking 0 argument2, and with 1 closed over arg.
+	# Returns the value: value of closed over arg + 1.
+	#########################################################
 	.align 16
-    .globl funinst_closure_0
-    .type funinst_closure_0, @function       
-funinst_closure_0:
+    .globl funinst_closure_0_1
+    .type funinst_closure_0_1, @function       
+funinst_closure_0_1:
+	# C goop
 	pushq	%rbp	 
 	movq	%rsp, %rbp
 	subq	$8, %rsp
 
 	# code
-	movq	%rdi, -8(%rbp)
-	addq	$0x08, -8(%rbp)
-	movq	-8(%rbp), %rax
 
+	# unsafely assume %r11 is a tagged closure reference
+	# convert to a real address in %r11
+	movq	addr_mask(%rip), %r10
+	andq	%r10, %r11
+
+	# cl[0]: the function
+	# cl[1]: the 0th argument (assume fixnum)
+	movq	8(%r11), %rax
+	addq	$0x01, %rax
+
+	# C goop
 	leave
 	ret
 
 	# ----------------------------------------------------------------------
+
+	# Invoke a function or a closure with 0 argumnts.
+	# Since this is a C boundary function, it sorta has to play nice with
+	# C's argument passing conventions.
 
 	.align 16
     .globl invoke_funinst_0
@@ -110,30 +140,63 @@ invoke_funinst_0:
 	pushq	%rbp	 
 	movq	%rsp, %rbp
 
-	# Check if it is a general funinst pointer
-	movq	%rdi, %r10
-	andq	$tagval_funinst, %r10
-	cmpq	$tagval_funinst, %r10
-	jne		.Lifi0_bad_funinst
+	pushq	%r12
+	movq	addr_mask(%rip), %r10
 
-	# invoke it with 0 arguments (assume fun only pointer)
+	# Validate if C's arg0 is a FUNINST of some kind
+	movq	%rdi, %r12
+	andb	$tagval_funinst_mask, %r12b
 
-	# First, get the pointer to the function...
-	movq	%rdi, %r10
-	movq	$0xfffffffffffffff0, %r11
-	andq	%r11, %r10
+	# Check if FUN
+	cmpb	$tagval_funinst_fun, %r12b
+	je		.Lifi0_invoke_fun
 
-	call	*%r10
+	# Check if CLOSURE
+	cmpb	$tagval_funinst_closure, %r12b
+	je		.Lifi0_invoke_closure
 
-	leave
-	ret
+	# Otherwise, it is bad, bail!
+	movq	bad_value(%rip), %rax
+	jmp		.Lifi0_done
 
-.Lifi0_bad_funinst:
-	movq	$0x11223344AABBCCD0, %rax
+.Lifi0_invoke_fun:
+	# convert tagged FUN pointer to actual function address
+	movq	%rdi, %r12
+	andq	%r10, %r12
+
+	# setup 0 arguments
+	# call the function
+	call	*%r12
+
+	jmp		.Lifi0_done
+
+.Lifi0_invoke_closure:
+	# Convert tagged closure representation to actual closure address
+	movq	%rdi, %r12
+	andq	%r10, %r12
+
+	# extract tagged function pointer (element 0) from closure
+	movq	0(%r12), %r12
+
+	# convert tagged function pointer to actual function pointer
+	andq	%r10, %r12
+
+	# Call the function at %r12, passing in the tagged closure in %r11
+	mov		%rdi, %r11
+	# setup 0 other arguments
+	# call the function
+	call	*%r12
+
+	jmp		.Lifi0_done
+
+.Lifi0_done:
+	popq	%r12
 	leave
 	ret
 
 	# ----------------------------------------------------------------------
+
+	# XXX fixme.
 
 	.align 16
     .globl invoke_funinst_1
@@ -149,22 +212,24 @@ invoke_funinst_1:
 	jne		.Lifi1_bad_funinst
 
 	# invoke it with 1 argument (assume fun only pointer)
+	pushq	%rbx
 
 	# First, get the pointer to the function...
-	movq	%rdi, %r10
-	movq	$0xfffffffffffffff0, %r11
-	andq	%r11, %r10
+	movq	%rdi, %rbx
+	movq	addr_mask(%rip), %r11
+	andq	%r11, %rbx
 
 	# Then construct arg0 for the function.
 	# Shift arg1 for the invoker to be arg0 for the callee
 	movq	%rsi, %rdi
 
-	call	*%r10
+	call	*%rbx
 
+	popq	%rbx
 	leave
 	ret
 
 .Lifi1_bad_funinst:
-	movq	$0x11223344AABBCCD1, %rax
+	movq	bad_value(%rip), %rax
 	leave
 	ret
