@@ -1,0 +1,85 @@
+A small biut of info about registers and their use according to at least the
+C ABI.
+
+General-Purpose Registers
+The 64-bit versions of the 'original' x86 registers are named:
+
+rax - register a extended
+rbx - register b extended
+rcx - register c extended
+rdx - register d extended
+rbp - register base pointer (start of stack)
+rsp - register stack pointer (current location in stack, growing downwards)
+rsi - register source index (source for data copies)
+rdi - register destination index (destination for data copies)
+
+The registers added for 64-bit mode are named:
+
+r8 - register 8
+r9 - register 9
+r10 - register 10
+r11 - register 11
+r12 - register 12
+r13 - register 13
+r14 - register 14
+r15 - register 15
+
+These may be accessed as:
+
+64-bit registers
+	 using the 'r' prefix: rax, r15
+
+32-bit registers
+	 using the 'e' prefix (original registers: e_x) or 
+	'd' suffix (added registers: r__d): eax, r15d
+
+16-bit registers
+	 using no prefix (original registers: _x) or 
+	'w' suffix (added registers: r__w): ax, r15w
+
+8-bit registers using 'h' ("high byte" of 16 bits) suffix 
+	(original registers - bits 8-15: _h): ah, bh
+
+8-bit registers using 'l' ("low byte" of 16 bits) suffix 
+	(original registers - bits 0-7: _l) or 
+	'b' suffix (added registers: r__b): al, bl, r15b
+
+Usage during syscall/function call:
+
+First six arguments are in 
+	rdi, rsi, rdx, rcx, r8d, r9d; remaining arguments are on the stack.
+
+For syscalls, the syscall number is in rax. 
+
+For procedure calls, rax should be set to 0. Return value is in rax.
+
+The called routine is expected to preserve 
+	rsp, rbp, rbx, r12, r13, r14, and r15 but may trample any other registers.
+
+
+More register usage stuff
+=========================
+
+These may be accessed as:
+
+There are sixteen 64-bit registers in x86-64: 
+	%rax, %rbx, %rcx, %rdx, %rdi, %rsi, %rbp, %rsp, and %r8-r15. 
+
+Of these, %rax, %rcx, %rdx, %rdi, %rsi, %rsp, and %r8-r11 are considered
+caller-save registers, meaning that they are not necessarily saved across
+function calls. 
+
+By convention, %rax is used to store a function’s return value, if it exists
+and is no more than 64 bits long. (Larger return types like structs are
+returned using the stack.) 
+
+Registers %rbx, %rbp, and %r12-r15 are callee-save registers, meaning that they
+are saved across function calls. 
+
+Register %rsp is used as the stack pointer, a pointer to the topmost element in
+the stack.  
+
+Additionally, %rdi, %rsi, %rdx, %rcx, %r8, and %r9 are used to pass the first
+six integer or pointer parameters to called functions. Additional parameters
+(or large parameters such as structs passed by value) are passed on the stack
+
