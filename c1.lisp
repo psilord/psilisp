@@ -258,13 +258,61 @@ and default it to :any"
   (expected-form-p env expr datum 'prim-p))
 
 ;; -----------------------------------------------------------------------
+;; AST Node Attribute Modeling
+;;
+;; Each AST node has a set of attributes associate with it, but for ease of use
+;; I modeled it as an isa relationship. Ontological reasoning with OOP is hard.
+;; Various compiler passes insert/access these attributes.
+;;
+;; This may take a different from in the future.
+;; -----------------------------------------------------------------------
+(defgeneric getattr (key attr-obj))
+(defgeneric (setf getattr) (value key attr-obj))
+(defgeneric remattr (key attr-obj))
+(defgeneric mergeattrs (dst-attr-obj src-attr-obj))
+(defgeneric copyattrs (dst-attr-obj src-attr-obj))
+
+(defclass attributes ()
+  ((%attrs :reader attrs
+           :initarg :attrs
+           :initform (make-hash-table :test #'equal))))
+
+(defun make-attributes (&rest init-forms)
+  (let ((attr-obj (make-instance 'attributes)))
+    (loop :for (key value) :on init-forms :by #'cddr
+          :do (setf (getattr key attr-obj) value))
+    attr-obj))
+
+(defmethod getattr (key (attr-obj attributes))
+  (gethash key (attrs attr-obj)))
+
+(defmethod (setf getattr) (value key (attr-obj attributes))
+  (setf (gethash key (attrs attr-obj)) value))
+
+(defmethod remattr (key (attr-obj attributes))
+  (remhash key (attrs attr-obj)))
+
+(defmethod mergeattrs ((dst-attr-obj attributes) (src-attr-obj attributes))
+  (maphash (lambda (key value)
+             (setf (getattr key dst-attr-obj) value))
+           (attrs src-attr-obj))
+  dst-attr-obj)
+
+(defmethod copyattrs ((dst-attr-obj attributes) (src-attr-obj attributes))
+  (clrhash (attrs dst-attr-obj))
+  (mergeattrs dst-attr-obj src-attr-obj))
+
+;; -----------------------------------------------------------------------
 ;; Original Source form AST: Syntax tree of original (including sugar) input.
-;; This is a traditional (in ALGOL-styl languages) for how to represent and
-;; AST of the original source forms. I do this so it provides me a place to put
+;;
+;; IR 0
+;;
+;; This is a traditional (in ALGOL-styl languages) for how to represent and AST
+;; of the original source forms. I do this so it provides me a place to put
 ;; annotation information and other stuff that I need to associate with things
-;; without cramming everything into progressively more complex sexp forms.
-;; The :type clause is basically meaningless, but useful for me as a human
-;; to keep track of the types in the AST node slots.
+;; without cramming everything into progressively more complex sexp forms.  The
+;; :type clause is basically meaningless, but useful for me as a human to keep
+;; track of the types in the AST node slots.
 ;; -----------------------------------------------------------------------
 
 (defgeneric seq-iter (seq-obj func))
@@ -286,7 +334,7 @@ and default it to :any"
 
 ;; The AST representation.
 
-(defclass ast () ())
+(defclass ast (attributes) ())
 
 (defclass toplevel (ast binding-form)
   ((%body :accessor body :initarg :body :type body)))
@@ -431,7 +479,11 @@ and default it to :any"
    (%args :accessor args :initarg :args :type exprs)))
 (simple-constructor application op args)
 
-;;---- closure conversion augmentation of the above IR
+;; -----------------------------------------------------------------------
+;; Closure conversion augmentation of the above IR
+;;
+;; IR 1
+;; -----------------------------------------------------------------------
 
 ;; All lambdas (which initially are functions that are either closed or not
 ;; closed) are converted to clambdas when they are closed. So after the closure
@@ -1743,6 +1795,27 @@ item and defaults to IDENTITY."
       (setf (free-vars self) (copy-seq result))
       (values self result))))
 
+
+;; -----------------------------------------------------------------------
+;; Pass: Closure Analyze
+;;
+;; This pass determines if lambda forms are in a functional position or not,
+;; and classifies variable references (in their syments) as being in a
+;; functional position or not. The ultimate purpose of this pass is to allow
+;; later classification of closures into a full closure, a partial + maybe
+;; extra args closure, or no closure and maybe extra args.
+;; -----------------------------------------------------------------------
+
+(defgeneric pass/closure-analyze (ast fnp))
+
+(defmethod pass/closure-analyze ((self toplevel) fnp)
+  self)
+
+;; TOOO
+
+
+
+
 ;; -----------------------------------------------------------------------
 ;; Perform ONLY :flat closure conversion for now. This is a functional-ish pass
 ;; that can rewrite or replace some ast nodes at the appropriate places.
@@ -2080,10 +2153,10 @@ insert the new-rename into FVCL."
         ;; This knowledge is now held in the closed-vars slot in the closure.
         ;; But we clean up the original lambda-syntax node even though we
         ;; drop the reference to it.
-	;;
-	;; TODO: Maybe we shouldn't drop this here so we can keep a chain of
-	;; mutations for debugging purpoess. Revisit this when the language is
-	;; stable enough that we can add in debugging information.
+        ;;
+        ;; TODO: Maybe we shouldn't drop this here so we can keep a chain of
+        ;; mutations for debugging purpoess. Revisit this when the language is
+        ;; stable enough that we can add in debugging information.
         (setf (free-vars self) nil)
 
         ;; NOTE FOR A DIFFERENT PASS: AFTER lambda arguments are evaluated,
@@ -2131,7 +2204,7 @@ insert the new-rename into FVCL."
 
      ;;;; Alphatization: original source -> AST (REQUIRED)
      ;;; Perform name resolution on symbols.
-     ;;; Produce a full AST of the original source.
+     ;;; Convert original source forms to the initial AST representation.
      ast (pass/alphatization env top-forms)
 
      ;;;; Free Variable Analysis: AST -> AST (REQUIRED)
@@ -2145,17 +2218,36 @@ insert the new-rename into FVCL."
      ;;; Convert LET, LETREC nodes to a lower level LAMBDA / APPLICATION forms
      ast (pass/desugar ast)
 
+     ;;;; Closure Analyze: AST -> AST (REQUIRED)
+     ;;; Determine if a lambda is in a functional position in an application
+     ;;; expression, and classify all variables if they are referenced in a
+     ;;; functional position and/or not. Lambda functions get an attribute on
+     ;;; the AST node that they are used in a functional position or not, and
+     ;;; variables get a mark in their syment (which is the union of all
+     ;;; observations of that variable's use.
+     ;;;
+     ;;; Variables that are the targets of bindings are already mutable.
+     ;;;
+     ;;; Technically not required, but we don't want to make empty closures and
+     ;;; stress the GC a lot in tight loops that call functions that don't need
+     ;;; to be closed over. The pass/closure-conversion uses this information,
+     ;;; so this call cannot be commented out without pass/closure-conversion
+     ;;; being altered to always generate a full closure.
+     ;;
+     ast (pass/closure-analyze ast nil)
+
      ;;;; Closure Conversion: AST -> AST (REQUIRED)
      ;;; Close free vars into a normalized, agnostic to representation, and
      ;;; full, closure environment representation that primarily exists
      ;;; in the symbol table and AST CLOSURE/LAMBDA  nodes.
-     ;; After this pass, all LAMBDA functions are closed.
+     ;; After this pass, all LAMBDA functions are closed and converted to
+     ;; clambda nodes in the AST.
      ast (pass/closure-conversion :flat (make-fvcl) ast)
 
      ;;;; Closure Analysis prolly have at least these additional passes. Not
      ;;;; all of these passes would necessarily be here or in this exact order.
 
-     ;;;; Closure Relaxation: AST -> AST (OPTIONAL)
+     ;;;; Closure Relaxation: AST -> AST (OPTIONAL) (TODO: Maybe remove me.)
      ;;; Remove some pressure on the GC since some closure structures can be
      ;;; removed or made smaller by this pass.
      ;; Compute which closures actually require which features.
